@@ -150,7 +150,11 @@ func validateOTLPEndpoint(endpoint string) error {
 
 func attachDaemonSet(ctx context.Context, deps Dependencies, namespace, endpoint string) error {
 	values, err := json.Marshal(map[string]any{
-		"env": map[string]any{"OTEL_EXPORTER_OTLP_ENDPOINT": endpoint},
+		"env": map[string]any{
+			"OTEL_EXPORTER_OTLP_ENDPOINT":         endpoint,
+			"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": endpoint,
+			"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT":  endpoint,
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("attach daemonset: build Helm values: %w", err)

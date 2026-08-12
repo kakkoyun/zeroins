@@ -104,7 +104,12 @@ func TestAttachDaemonSetCommand(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			for _, want := range []string{"OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector:4318"} {
+			for _, want := range []string{
+				"OTEL_EXPORTER_OTLP_ENDPOINT",
+				"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+				"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+				"https://collector:4318",
+			} {
 				if !strings.Contains(string(data), want) {
 					return fmt.Errorf("values missing %q", want)
 				}
