@@ -85,6 +85,8 @@ data:
         protocols:
           grpc:
             endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
     exporters:
       debug:
         verbosity: detailed
@@ -124,6 +126,8 @@ spec:
           ports:
             - name: otlp-grpc
               containerPort: 4317
+            - name: otlp-http
+              containerPort: 4318
           volumeMounts:
             - name: config
               mountPath: /conf
@@ -144,6 +148,9 @@ spec:
     - name: otlp-grpc
       port: 4317
       targetPort: otlp-grpc
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -195,7 +202,8 @@ start_http_traffic() {
 }
 
 exercise_obi_daemonset() {
-  kubectl obi attach --endpoint=http://telemetry-sink.default.svc.cluster.local:4317
+  # Use OTLP/HTTP so this gate exercises the complete signal-specific /v1 paths.
+  kubectl obi attach --endpoint=http://telemetry-sink.default.svc.cluster.local:4318
   start_http_traffic
   if ! wait_for_log 'ResourceSpans|ResourceMetrics|ScopeSpans|ScopeMetrics' 180; then
     kubectl logs --namespace obi-system --selector app.kubernetes.io/instance=obi \
@@ -212,9 +220,9 @@ exercise_obi_daemonset() {
 
 exercise_obi_sidecar() {
   kubectl obi attach sample-http --mode=sidecar \
-    --endpoint=http://telemetry-sink.default.svc.cluster.local:4317
+    --endpoint=http://telemetry-sink.default.svc.cluster.local:4318
   kubectl obi attach sample-http --mode=sidecar \
-    --endpoint=http://telemetry-sink.default.svc.cluster.local:4317
+    --endpoint=http://telemetry-sink.default.svc.cluster.local:4318
 
   local obi_count
   obi_count=$(kubectl get deployment sample-http -o jsonpath='{range .spec.template.spec.containers[*]}{.name}{"\n"}{end}' | grep -c '^obi$')

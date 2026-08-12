@@ -61,7 +61,9 @@ func TestEndpointValidation(t *testing.T) {
 		wantErr  string
 	}{
 		{endpoint: "http://collector:4318"},
-		{endpoint: "https://collector.example/v1/traces"},
+		{endpoint: "https://collector.example/tenant"},
+		{endpoint: "https://collector.example/v1/traces", wantErr: "base URL"},
+		{endpoint: "https://collector.example/tenant/v1/metrics/", wantErr: "base URL"},
 		{endpoint: "collector:4317", wantErr: "absolute http or https"},
 		{endpoint: "ftp://collector", wantErr: "absolute http or https"},
 		{endpoint: (&url.URL{Scheme: "https", Host: "collector", User: url.User("example")}).String(), wantErr: "user information"},

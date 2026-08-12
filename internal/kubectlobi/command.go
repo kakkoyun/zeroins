@@ -145,6 +145,12 @@ func validateOTLPEndpoint(endpoint string) error {
 	if parsed.RawQuery != "" || parsed.Fragment != "" {
 		return fmt.Errorf("endpoint must not contain a query or fragment")
 	}
+	path := strings.TrimSuffix(parsed.Path, "/")
+	for _, signalPath := range []string{"/v1/logs", "/v1/metrics", "/v1/traces"} {
+		if strings.HasSuffix(path, signalPath) {
+			return fmt.Errorf("endpoint must be an OTLP base URL, not a signal-specific %s URL", signalPath)
+		}
+	}
 	return nil
 }
 
