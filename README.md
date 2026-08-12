@@ -67,9 +67,9 @@ OBI requires supported Linux kernels, BTF, process access, and eBPF privileges.
 The DaemonSet can observe workloads across a node. The sidecar runs privileged,
 enables shared process namespaces, and restarts the selected deployment.
 
-Both modes require an explicit OTLP HTTP(S) endpoint. Endpoint URLs containing
-userinfo, queries, or fragments are rejected to keep credentials out of Helm
-arguments and release values.
+Both modes require an explicit OTLP HTTP(S) base endpoint. OBI derives the
+signal paths from it. Endpoint URLs containing userinfo, queries, or fragments
+are rejected to keep credentials out of Helm arguments and release values.
 
 ```bash
 # Node-wide DaemonSet in obi-system.
@@ -147,18 +147,19 @@ make check/helm
 package. `make check/helm` uses Helm v4.2.3 to render both pinned charts and
 asserts their image, security, endpoint, and profiles-pipeline contracts.
 
-A separate Linux integration gate uses a disposable, directly hosted Kubernetes
-cluster and runs real eBPF probes:
+A separate Linux integration gate runs real eBPF probes against the Kubernetes
+cluster selected by `KUBECONFIG`. It installs privileged, host-level DaemonSets
+and deletes its fixed-name test resources, so it requires an explicit opt-in:
 
 ```bash
-make check/integration
+ZEROINS_INTEGRATION_ALLOW_CURRENT_CONTEXT=1 make check/integration
 ```
 
-The integration gate must run on a supported Linux host. Nested clusters such as
-kind and minikube are unsupported by the pinned profiler because their node
-containers use a different PID namespace. The checked-in workflow therefore
-starts K3s directly on the Linux runner. The gate fails rather than reporting
-success when the host cannot run the probes.
+Run it only on a disposable, directly hosted Kubernetes cluster on a supported
+Linux host. Nested-cluster testing could not provide the host PID identity
+required by the pinned profiler, so the checked-in workflow starts disposable
+K3s directly on the Linux runner. The gate fails rather than reporting success
+when the host cannot run the probes.
 
 ## Status and scope
 

@@ -129,7 +129,7 @@ func newAttachCommand(deps Dependencies) *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", "", "Namespace (daemonset default: obi-system; sidecar default: current context)")
 	cmd.Flags().StringVar(&mode, "mode", "daemonset", "Deployment mode: daemonset or sidecar")
-	cmd.Flags().StringVar(&endpoint, "endpoint", "", "Required OTLP HTTP(S) endpoint")
+	cmd.Flags().StringVar(&endpoint, "endpoint", "", "Required OTLP HTTP(S) base endpoint")
 	_ = cmd.MarkFlagRequired("endpoint")
 	return cmd
 }
@@ -148,14 +148,36 @@ func validateOTLPEndpoint(endpoint string) error {
 	return nil
 }
 
-func attachDaemonSet(ctx context.Context, deps Dependencies, namespace, endpoint string) error {
-	values, err := json.Marshal(map[string]any{
+func signalEndpoint(endpoint, signal string) (string, error) {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return "", fmt.Errorf("parse endpoint: %w", err)
+	}
+	parsed.Path = strings.TrimSuffix(parsed.Path, "/") + "/v1/" + signal
+	parsed.RawPath = ""
+	return parsed.String(), nil
+}
+
+func daemonSetValues(endpoint string) ([]byte, error) {
+	metricsEndpoint, err := signalEndpoint(endpoint, "metrics")
+	if err != nil {
+		return nil, err
+	}
+	tracesEndpoint, err := signalEndpoint(endpoint, "traces")
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(map[string]any{
 		"env": map[string]any{
 			"OTEL_EXPORTER_OTLP_ENDPOINT":         endpoint,
-			"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": endpoint,
-			"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT":  endpoint,
+			"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": metricsEndpoint,
+			"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT":  tracesEndpoint,
 		},
 	})
+}
+
+func attachDaemonSet(ctx context.Context, deps Dependencies, namespace, endpoint string) error {
+	values, err := daemonSetValues(endpoint)
 	if err != nil {
 		return fmt.Errorf("attach daemonset: build Helm values: %w", err)
 	}

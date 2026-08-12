@@ -20,6 +20,8 @@
 | S-OBI-08 | [OBI trace-log correlation](https://opentelemetry.io/docs/zero-code/obi/trace-log-correlation/) | 2026-08-10 | Correlation scope and log-export boundary |
 | S-OBI-09 | [OBI donation tracking](https://github.com/open-telemetry/community/issues/2406) | closed 2025 | Donation transfer |
 | S-OBI-10 | [OBI Helm chart values](https://github.com/open-telemetry/opentelemetry-helm-charts/blob/opentelemetry-ebpf-instrumentation-0.10.0/charts/opentelemetry-ebpf-instrumentation/values.yaml) | chart 0.10.0 | Deployment and exporter values |
+| S-OBI-11 | [OBI metrics exporter configuration](https://github.com/open-telemetry/opentelemetry-ebpf-instrumentation/blob/v0.10.0/pkg/export/otel/otelcfg/config_metrics.go) | v0.10.0 | Common versus signal-specific OTLP metrics paths |
+| S-OBI-12 | [OBI traces exporter configuration](https://github.com/open-telemetry/opentelemetry-ebpf-instrumentation/blob/v0.10.0/pkg/export/otel/otelcfg/config_traces.go) | v0.10.0 | Common versus signal-specific OTLP traces paths |
 
 ## otelc and Orchestrion
 

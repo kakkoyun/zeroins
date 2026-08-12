@@ -72,15 +72,18 @@ main() {
     --version "${OBI_CHART_VERSION}" \
     --namespace obi-system \
     --set-string 'env.OTEL_EXPORTER_OTLP_ENDPOINT=https://collector.example:4318' \
-    --set-string 'env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=https://collector.example:4318' \
-    --set-string 'env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://collector.example:4318' \
+    --set-string 'env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=https://collector.example:4318/v1/metrics' \
+    --set-string 'env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://collector.example:4318/v1/traces' \
     >"${obi_manifest}"
   require_match 'kind: DaemonSet' "${obi_manifest}"
   require_match 'privileged: true' "${obi_manifest}"
   require_match 'OTEL_EXPORTER_OTLP_ENDPOINT' "${obi_manifest}"
   require_match 'OTEL_EXPORTER_OTLP_METRICS_ENDPOINT' "${obi_manifest}"
   require_match 'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT' "${obi_manifest}"
-  require_match 'https://collector.example:4318' "${obi_manifest}"
+  require_match 'https://collector.example:4318/v1/metrics' "${obi_manifest}"
+  require_match 'https://collector.example:4318/v1/traces' "${obi_manifest}"
+  require_match 'endpoint: http://\$\{HOST_IP\}:4318' "${obi_manifest}"
+  require_match 'endpoint: http://\$\{HOST_IP\}:4317' "${obi_manifest}"
   require_match 'v0\.10\.0' "${obi_manifest}"
 
   local profiler_values="${temporary_directory}/profiler-values.json"

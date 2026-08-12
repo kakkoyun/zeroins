@@ -29,17 +29,22 @@ fail() {
 wait_for_log() {
   local pattern=$1
   local timeout_seconds=$2
+  local since_time=${3:-}
   local elapsed=0
+  local -a log_args=(deployment/telemetry-sink --tail=-1)
+  if [[ -n "${since_time}" ]]; then
+    log_args+=(--since-time="${since_time}")
+  fi
   while ((elapsed < timeout_seconds)); do
     # Do not use grep -q here: with pipefail, an early match can close the pipe
     # while kubectl is still writing, turning a successful assertion into SIGPIPE.
-    if kubectl logs deployment/telemetry-sink --tail=-1 2>&1 | grep -E "${pattern}" >/dev/null; then
+    if kubectl logs "${log_args[@]}" 2>&1 | grep -E "${pattern}" >/dev/null; then
       return 0
     fi
     sleep 5
     elapsed=$((elapsed + 5))
   done
-  kubectl logs deployment/telemetry-sink --tail=-1 >&2 || true
+  kubectl logs "${log_args[@]}" >&2 || true
   return 1
 }
 
@@ -48,6 +53,15 @@ preflight() {
   for command_name in kubectl helm go; do
     command -v "${command_name}" >/dev/null || fail "${command_name} is required"
   done
+  [[ "${ZEROINS_INTEGRATION_ALLOW_CURRENT_CONTEXT:-0}" == '1' ]] ||
+    fail 'set ZEROINS_INTEGRATION_ALLOW_CURRENT_CONTEXT=1 to allow privileged changes to the current Kubernetes context'
+
+  local context server
+  context=$(kubectl config current-context) || fail 'cannot read the current Kubernetes context'
+  server=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}') ||
+    fail 'cannot read the current Kubernetes API server'
+  printf 'Integration target: context=%q server=%q\n' "${context}" "${server}"
+
   if [[ ! -r /sys/kernel/btf/vmlinux ]]; then
     if [[ "${ZEROINS_ALLOW_UNSUPPORTED_EBPF_SKIP:-0}" == '1' ]]; then
       printf 'SKIP: host does not expose /sys/kernel/btf/vmlinux.\n' >&2
@@ -171,7 +185,7 @@ YAML
 }
 
 start_http_traffic() {
-  kubectl delete pod traffic --ignore-not-found >/dev/null
+  kubectl delete pod traffic --ignore-not-found --grace-period=1 >/dev/null
   # Keep traffic flowing while OBI discovers and instruments the workload. A short
   # burst can finish before the asynchronous process-discovery poll completes.
   # shellcheck disable=SC2016 # Expansion belongs to the pod shell.
@@ -188,7 +202,7 @@ exercise_obi_daemonset() {
       --all-containers --prefix --tail=-1 >&2 || true
     fail 'OBI did not export traces or metrics to the sink'
   fi
-  kubectl delete pod traffic --wait=true
+  kubectl delete pod traffic --wait=true --grace-period=1
   kubectl obi status
   kubectl obi detach
   if helm status obi --namespace obi-system >/dev/null 2>&1; then
@@ -207,7 +221,7 @@ exercise_obi_sidecar() {
   [[ ${obi_count} -eq 1 ]] || fail "sidecar attach created ${obi_count} obi containers"
 
   kubectl obi detach sample-http --mode=sidecar
-  if kubectl get deployment sample-http -o jsonpath='{range .spec.template.spec.containers[*]}{.name}{"\n"}{end}' | grep -q '^obi$'; then
+  if kubectl get deployment sample-http -o jsonpath='{range .spec.template.spec.containers[*]}{.name}{"\n"}{end}' | grep '^obi$' >/dev/null; then
     fail 'sidecar detach left the obi container behind'
   fi
   local shared_namespace
@@ -216,6 +230,8 @@ exercise_obi_sidecar() {
 }
 
 exercise_profiler() {
+  local profile_start
+  profile_start=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   if ! kubectl profiler attach \
     --endpoint=telemetry-sink.default.svc.cluster.local:4317 \
     --insecure; then
@@ -232,7 +248,7 @@ exercise_profiler() {
   kubectl run cpu-burn --image=busybox:1.37 --restart=Never --command -- \
     sh -c 'i=0; while [ "$i" -lt 10000000 ]; do i=$((i+1)); done'
   kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/cpu-burn --timeout=180s
-  wait_for_log 'ResourceProfiles|ScopeProfiles|Profile' 240 ||
+  wait_for_log 'ResourceProfiles|ScopeProfiles' 240 "${profile_start}" ||
     fail 'profiler did not export a profile batch to the sink'
 
   kubectl profiler detach

@@ -199,9 +199,16 @@ deployment coordination with app teams.
 
 `kubectl-obi` v0.1.0 renders OpenTelemetry's
 `opentelemetry-ebpf-instrumentation` Helm chart `0.10.0`, whose application
-version is OBI `v0.10.0`. It requires an explicit OTLP HTTP(S) endpoint rather
-than accepting the chart's host-local defaults. The wrapper remains
-experimental; it does not replace the upstream deployment documentation.
+version is OBI `v0.10.0`. It requires an explicit OTLP HTTP(S) base endpoint
+rather than accepting the chart's host-local defaults. Chart `0.10.0` injects
+signal-specific metrics and traces endpoints, so the wrapper overrides both.
+OBI treats signal-specific HTTP endpoints as complete URLs; the wrapper appends
+`/v1/metrics` and `/v1/traces` to the base endpoint before setting them.
+
+**Sources:** [S-OBI-10], [S-OBI-11], [S-OBI-12]
+
+The wrapper remains experimental; it does not replace the upstream deployment
+documentation.
 
 ---
 
@@ -215,3 +222,6 @@ experimental; it does not replace the upstream deployment documentation.
 | S-OBI-04 | OBI official docs (zero-code, language support, kernel) | <https://opentelemetry.io/docs/zero-code/obi/> |
 | S-OBI-05 | OBI Kubernetes setup docs | <https://opentelemetry.io/docs/zero-code/obi/setup/kubernetes/> |
 | S-OBI-06 | OBI SUPPORT_MATRIX.md (v0.10.0) | <https://github.com/open-telemetry/opentelemetry-ebpf-instrumentation/blob/v0.10.0/SUPPORT_MATRIX.md> |
+| S-OBI-10 | OBI Helm chart values (0.10.0) | <https://github.com/open-telemetry/opentelemetry-helm-charts/blob/opentelemetry-ebpf-instrumentation-0.10.0/charts/opentelemetry-ebpf-instrumentation/values.yaml> |
+| S-OBI-11 | OBI metrics exporter configuration (v0.10.0) | <https://github.com/open-telemetry/opentelemetry-ebpf-instrumentation/blob/v0.10.0/pkg/export/otel/otelcfg/config_metrics.go> |
+| S-OBI-12 | OBI traces exporter configuration (v0.10.0) | <https://github.com/open-telemetry/opentelemetry-ebpf-instrumentation/blob/v0.10.0/pkg/export/otel/otelcfg/config_traces.go> |

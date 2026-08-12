@@ -80,6 +80,52 @@ func TestEndpointValidation(t *testing.T) {
 	}
 }
 
+func TestDaemonSetValuesUseCompleteSignalEndpoints(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		metrics  string
+		traces   string
+	}{
+		{
+			name:     "standard HTTP port",
+			endpoint: "https://collector.example:4318",
+			metrics:  "https://collector.example:4318/v1/metrics",
+			traces:   "https://collector.example:4318/v1/traces",
+		},
+		{
+			name:     "gRPC port with base path",
+			endpoint: "http://collector.example:4317/tenant",
+			metrics:  "http://collector.example:4317/tenant/v1/metrics",
+			traces:   "http://collector.example:4317/tenant/v1/traces",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			values, err := daemonSetValues(test.endpoint)
+			if err != nil {
+				t.Fatalf("daemonSetValues() error = %v", err)
+			}
+			var document struct {
+				Env map[string]string `json:"env"`
+			}
+			if err := json.Unmarshal(values, &document); err != nil {
+				t.Fatalf("json.Unmarshal() error = %v", err)
+			}
+			want := map[string]string{
+				"OTEL_EXPORTER_OTLP_ENDPOINT":         test.endpoint,
+				"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": test.metrics,
+				"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT":  test.traces,
+			}
+			for key, wantValue := range want {
+				if got := document.Env[key]; got != wantValue {
+					t.Errorf("%s = %q, want %q", key, got, wantValue)
+				}
+			}
+		})
+	}
+}
+
 func TestAttachDaemonSetCommand(t *testing.T) {
 	var valuesPath string
 	runner := &fakeRunner{
