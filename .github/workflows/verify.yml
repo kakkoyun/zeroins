@@ -1,0 +1,68 @@
+name: verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        go: ["1.24.x", stable]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: ${{ matrix.go }}
+      - uses: taiki-e/install-action@67729d5c413db75907f0ad1e39bb04b9c868ff60 # v2
+        with:
+          tool: typos-cli@1.48.0
+      - run: go install golang.org/x/tools/cmd/goimports@v0.31.0
+      - run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - run: make check
+
+  shell-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: stable
+      - run: sudo apt-get update && sudo apt-get install --yes shellcheck
+      - run: go install mvdan.cc/sh/v3/cmd/shfmt@v3.12.0
+      - run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - run: bash -n scripts/*.sh
+      - run: shellcheck scripts/*.sh
+      - run: shfmt -d -i 2 -ci scripts/*.sh
+
+  helm-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: stable
+      - name: Install Helm v4.2.3
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSLO https://get.helm.sh/helm-v4.2.3-linux-amd64.tar.gz
+          echo 'e9b88b4ee95b18c706839c28d3a0220e5bc470e9cd9262410c90793c45ff8b7c  helm-v4.2.3-linux-amd64.tar.gz' | sha256sum --check
+          tar -xzf helm-v4.2.3-linux-amd64.tar.gz
+          sudo install -m 0755 linux-amd64/helm /usr/local/bin/helm
+      - name: Render charts and validate the profiler image configuration
+        env:
+          ZEROINS_VALIDATE_PROFILER_IMAGE: "1"
+        run: make check/helm

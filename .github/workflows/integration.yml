@@ -1,0 +1,35 @@
+name: linux-integration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-integration-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  kind-ebpf-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: stable
+      - name: Install kind v0.32.0
+        run: |
+          go install sigs.k8s.io/kind@v0.32.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Install Helm v4.2.3
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSLO https://get.helm.sh/helm-v4.2.3-linux-amd64.tar.gz
+          echo 'e9b88b4ee95b18c706839c28d3a0220e5bc470e9cd9262410c90793c45ff8b7c  helm-v4.2.3-linux-amd64.tar.gz' | sha256sum --check
+          tar -xzf helm-v4.2.3-linux-amd64.tar.gz
+          sudo install -m 0755 linux-amd64/helm /usr/local/bin/helm
+      - name: Run live OBI and profiler gate
+        run: make check/integration
