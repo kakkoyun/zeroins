@@ -162,19 +162,25 @@ YAML
   kubectl rollout status deployment/sample-http --timeout=180s
 }
 
-generate_http_traffic() {
+start_http_traffic() {
   kubectl delete pod traffic --ignore-not-found >/dev/null
+  # Keep traffic flowing while OBI discovers and instruments the workload. A short
+  # burst can finish before the asynchronous process-discovery poll completes.
   # shellcheck disable=SC2016 # Expansion belongs to the pod shell.
   kubectl run traffic --image=curlimages/curl:8.17.0 --restart=Never --command -- \
-    sh -c 'i=0; while [ "$i" -lt 40 ]; do curl -fsS http://sample-http/ >/dev/null; i=$((i+1)); done'
-  kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/traffic --timeout=120s
+    sh -c 'while true; do curl -fsS http://sample-http/ >/dev/null; sleep 0.1; done'
+  kubectl wait --for=condition=Ready pod/traffic --timeout=120s
 }
 
 exercise_obi_daemonset() {
   kubectl obi attach --endpoint=http://telemetry-sink.default.svc.cluster.local:4317
-  generate_http_traffic
-  wait_for_log 'ResourceSpans|ResourceMetrics|ScopeSpans|ScopeMetrics' 180 ||
+  start_http_traffic
+  if ! wait_for_log 'ResourceSpans|ResourceMetrics|ScopeSpans|ScopeMetrics' 180; then
+    kubectl logs --namespace obi-system --selector app.kubernetes.io/instance=obi \
+      --all-containers --prefix --tail=-1 >&2 || true
     fail 'OBI did not export traces or metrics to the sink'
+  fi
+  kubectl delete pod traffic --wait=true
   kubectl obi status
   kubectl obi detach
   if helm status obi --namespace obi-system >/dev/null 2>&1; then
