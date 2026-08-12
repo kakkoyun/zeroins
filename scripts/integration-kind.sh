@@ -24,7 +24,9 @@ wait_for_log() {
   local timeout_seconds=$2
   local elapsed=0
   while ((elapsed < timeout_seconds)); do
-    if kubectl logs deployment/telemetry-sink --tail=-1 2>&1 | grep -Eq "${pattern}"; then
+    # Do not use grep -q here: with pipefail, an early match can close the pipe
+    # while kubectl is still writing, turning a successful assertion into SIGPIPE.
+    if kubectl logs deployment/telemetry-sink --tail=-1 2>&1 | grep -E "${pattern}" >/dev/null; then
       return 0
     fi
     sleep 5
