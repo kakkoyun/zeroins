@@ -147,15 +147,18 @@ make check/helm
 package. `make check/helm` uses Helm v4.2.3 to render both pinned charts and
 asserts their image, security, endpoint, and profiles-pipeline contracts.
 
-A separate Linux integration gate creates a disposable kind cluster and runs
-real eBPF probes:
+A separate Linux integration gate uses a disposable, directly hosted Kubernetes
+cluster and runs real eBPF probes:
 
 ```bash
 make check/integration
 ```
 
-The integration gate must run on a supported Linux host. It fails rather than
-claiming success when the host cannot run the probes.
+The integration gate must run on a supported Linux host. Nested clusters such as
+kind and minikube are unsupported by the pinned profiler because their node
+containers use a different PID namespace. The checked-in workflow therefore
+starts K3s directly on the Linux runner. The gate fails rather than reporting
+success when the host cannot run the probes.
 
 ## Status and scope
 

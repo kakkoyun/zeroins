@@ -46,7 +46,7 @@ check/helm:
 	./scripts/verify-helm-contracts.sh
 
 check/integration:
-	./scripts/integration-kind.sh
+	./scripts/integration-linux.sh
 
 install:
 	go install ./cmd/...
@@ -60,5 +60,5 @@ help:
 	@printf '%s\n' '  make crossbuild         Build Linux, Darwin, and Windows targets'
 	@printf '%s\n' '  make check              Run lint, build, tests, and cross-builds'
 	@printf '%s\n' '  make check/helm         Render and validate pinned Helm chart contracts'
-	@printf '%s\n' '  make check/integration  Run the live Linux kind release gate'
+	@printf '%s\n' '  make check/integration  Run the live Linux release gate'
 	@printf '%s\n' '  make install            Install all four commands locally'

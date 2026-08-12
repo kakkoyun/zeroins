@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  kind-ebpf-gate:
+  direct-host-ebpf-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -19,17 +19,43 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: stable
-      - name: Install kind v0.32.0
+      - name: Install K3s v1.36.3+k3s1
+        shell: bash
         run: |
-          go install sigs.k8s.io/kind@v0.32.0
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          set -o errexit
+          set -o nounset
+          set -o pipefail
+          readonly k3s_version='v1.36.3+k3s1'
+          curl -fsSL -o k3s "https://github.com/k3s-io/k3s/releases/download/${k3s_version//+/%2B}/k3s"
+          printf '%s  %s\n' '2f98a9f8fe5782479ee2d54e70a1b10a7f6fd4cae8d38ed3098452dc6eed76b5' 'k3s' | sha256sum --check
+          sudo install -m 0755 k3s /usr/local/bin/k3s
+          sudo k3s server --disable traefik --write-kubeconfig-mode 0644 2>&1 |
+            tee "${RUNNER_TEMP}/k3s.log" >/dev/null &
+          for attempt in {1..60}; do
+            if sudo k3s kubectl get nodes >/dev/null 2>&1; then
+              break
+            fi
+            if [[ ${attempt} -eq 60 ]]; then
+              cat "${RUNNER_TEMP}/k3s.log" >&2
+              exit 1
+            fi
+            sleep 2
+          done
+          sudo k3s kubectl wait --for=condition=Ready node --all --timeout=120s
+          sudo k3s kubectl config view --raw | tee "${RUNNER_TEMP}/kubeconfig" >/dev/null
+          printf 'KUBECONFIG=%s\n' "${RUNNER_TEMP}/kubeconfig" >>"${GITHUB_ENV}"
       - name: Install Helm v4.2.3
         shell: bash
         run: |
-          set -euo pipefail
+          set -o errexit
+          set -o nounset
+          set -o pipefail
           curl -fsSLO https://get.helm.sh/helm-v4.2.3-linux-amd64.tar.gz
-          echo 'e9b88b4ee95b18c706839c28d3a0220e5bc470e9cd9262410c90793c45ff8b7c  helm-v4.2.3-linux-amd64.tar.gz' | sha256sum --check
+          printf '%s  %s\n' 'e9b88b4ee95b18c706839c28d3a0220e5bc470e9cd9262410c90793c45ff8b7c' 'helm-v4.2.3-linux-amd64.tar.gz' | sha256sum --check
           tar -xzf helm-v4.2.3-linux-amd64.tar.gz
           sudo install -m 0755 linux-amd64/helm /usr/local/bin/helm
       - name: Run live OBI and profiler gate
         run: make check/integration
+      - name: Show K3s logs on failure
+        if: failure()
+        run: cat "${RUNNER_TEMP}/k3s.log" >&2

@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
-# Exercise zeroins against a disposable Linux kind cluster.
-set -euo pipefail
+# Exercise zeroins against a disposable, directly hosted Linux Kubernetes cluster.
+set -o errexit
+set -o nounset
+set -o pipefail
 
-readonly CLUSTER_NAME="zeroins-${GITHUB_RUN_ID:-local}-$$"
 readonly PROFILER_IMAGE='otel/opentelemetry-collector-ebpf-profiler:0.158.0'
 
 temporary_directory=''
 
 cleanup() {
-  kind delete cluster --name "${CLUSTER_NAME}" >/dev/null 2>&1 || true
+  helm uninstall obi --namespace obi-system --ignore-not-found >/dev/null 2>&1 || true
+  helm uninstall profiler --namespace profiler-system --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete deployment telemetry-sink sample-http --namespace default --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete service telemetry-sink sample-http --namespace default --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete configmap telemetry-sink --namespace default --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete pod traffic cpu-burn --namespace default --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete namespace obi-system profiler-system --ignore-not-found --wait=false >/dev/null 2>&1 || true
   if [[ -n "${temporary_directory}" ]]; then
     rm -rf "${temporary_directory}"
   fi
@@ -38,10 +45,9 @@ wait_for_log() {
 
 preflight() {
   [[ $(uname -s) == 'Linux' ]] || fail 'the live eBPF gate requires Linux'
-  for command_name in docker kind kubectl helm go; do
+  for command_name in kubectl helm go; do
     command -v "${command_name}" >/dev/null || fail "${command_name} is required"
   done
-  docker info >/dev/null 2>&1 || fail 'Docker is not available'
   if [[ ! -r /sys/kernel/btf/vmlinux ]]; then
     if [[ "${ZEROINS_ALLOW_UNSUPPORTED_EBPF_SKIP:-0}" == '1' ]]; then
       printf 'SKIP: host does not expose /sys/kernel/btf/vmlinux.\n' >&2
@@ -240,13 +246,11 @@ main() {
 
   temporary_directory=$(mktemp -d)
   trap cleanup EXIT
-  export KUBECONFIG="${temporary_directory}/kubeconfig"
-
   go build -o "${temporary_directory}/bin/kubectl-obi" ./cmd/kubectl-obi
   go build -o "${temporary_directory}/bin/kubectl-profiler" ./cmd/kubectl-profiler
   export PATH="${temporary_directory}/bin:${PATH}"
 
-  kind create cluster --name "${CLUSTER_NAME}" --kubeconfig "${KUBECONFIG}" --wait 180s
+  kubectl cluster-info >/dev/null || fail 'Kubernetes cluster is not available'
   deploy_sink_and_workload
   exercise_obi_daemonset
   exercise_obi_sidecar
