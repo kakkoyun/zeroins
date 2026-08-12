@@ -210,9 +210,15 @@ exercise_obi_sidecar() {
 }
 
 exercise_profiler() {
-  kubectl profiler attach \
+  if ! kubectl profiler attach \
     --endpoint=telemetry-sink.default.svc.cluster.local:4317 \
-    --insecure
+    --insecure; then
+    kubectl get pods --namespace profiler-system -o wide >&2 || true
+    kubectl describe pods --namespace profiler-system >&2 || true
+    kubectl logs --namespace profiler-system --selector app.kubernetes.io/instance=profiler \
+      --all-containers --prefix --tail=-1 >&2 || true
+    fail 'profiling Collector did not become ready'
+  fi
   kubectl profiler status
 
   kubectl delete pod cpu-burn --ignore-not-found >/dev/null
