@@ -189,6 +189,50 @@ license: MIT
 	}
 }
 
+func TestNonStringName(t *testing.T) {
+	dir := t.TempDir()
+	writeValidTree(t, dir, "alpha-skill")
+	// Overwrite SKILL.md with a non-string name (integer).
+	skillPath := filepath.Join(dir, "skills", "alpha-skill", "SKILL.md")
+	bad := `---
+name: 123
+description: A valid skill.
+license: MIT
+---
+
+# alpha-skill
+`
+	if err := os.WriteFile(skillPath, []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fails := runCheck(t, dir)
+	if !hasCheck(fails, "B") {
+		t.Fatalf("expected check B failure for non-string name, got: %v", fails)
+	}
+}
+
+func TestNonStringDescription(t *testing.T) {
+	dir := t.TempDir()
+	writeValidTree(t, dir, "alpha-skill")
+	// Overwrite SKILL.md with a boolean description.
+	skillPath := filepath.Join(dir, "skills", "alpha-skill", "SKILL.md")
+	bad := `---
+name: alpha-skill
+description: true
+license: MIT
+---
+
+# alpha-skill
+`
+	if err := os.WriteFile(skillPath, []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fails := runCheck(t, dir)
+	if !hasCheck(fails, "B") {
+		t.Fatalf("expected check B failure for non-string description, got: %v", fails)
+	}
+}
+
 func TestSKILLMdAtLineCap(t *testing.T) {
 	dir := t.TempDir()
 	writeValidTree(t, dir, "alpha-skill")
@@ -372,6 +416,23 @@ func TestEvalsJSONMissingFile(t *testing.T) {
 	fails := runCheck(t, dir)
 	if !hasCheck(fails, "H") {
 		t.Fatalf("expected check H failure for missing eval file, got: %v", fails)
+	}
+}
+
+func TestEvalsJSONSkillFieldMismatch(t *testing.T) {
+	dir := t.TempDir()
+	writeValidTree(t, dir, "alpha-skill")
+	evalDir := filepath.Join(dir, "skills", "alpha-skill", "evals")
+	if err := os.MkdirAll(evalDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bad := `{\n  "skill": "wrong-skill",\n  "cases": [\n    { "id": "x", "prompt": "A", "expectations": ["y"] }\n  ]\n}`
+	if err := os.WriteFile(filepath.Join(evalDir, "evals.json"), []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fails := runCheck(t, dir)
+	if !hasCheck(fails, "H") {
+		t.Fatalf("expected check H failure for skill field mismatch, got: %v", fails)
 	}
 }
 

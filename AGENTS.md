@@ -30,7 +30,7 @@ SKILL.md begins with YAML frontmatter delimited by `---` lines. Allowed keys:
 
 No other keys are permitted. Frontmatter is parsed with a real YAML parser
 (`gopkg.in/yaml.v3`), not line matching. An unquoted `description` containing a
-bare `: ` breaks the document while a regex still reports a plausible character
+bare `:` breaks the document while a regex still reports a plausible character
 count for frontmatter no spec client can load.
 
 ## Registration triple
@@ -63,7 +63,7 @@ skills/
 
 ## Gate-bearing skills
 
-Four skills can mutate a cluster and carry a confirmation gate:
+Four skills can mutate a cluster and will carry a confirmation gate:
 
 - `collect-go-telemetry` — the spine; its `references/confirmation-gate.md` is
   the canonical copy
@@ -71,15 +71,16 @@ Four skills can mutate a cluster and carry a confirmation gate:
 - `zeroins-ebpf-profiler-attach`
 - `profile-go-with-perfgo`
 
-`references/confirmation-gate.md` ships byte-identical in all four. The
+`references/confirmation-gate.md` will ship byte-identical in all four. The
 canonical copy is `skills/collect-go-telemetry/references/confirmation-gate.md`.
-`make check/skills` verifies byte-identity and that each gate-bearing SKILL.md
-links to it before the first fenced block containing `attach` or `detach`.
+Check F (byte-identity and link ordering) lands in PR 2 with the content that
+makes it pass.
 
 ## Version pins
 
 Version pins quoted anywhere under `skills/**` must agree with the README
-"Version pins" table. `make check/skills` verifies this.
+"Version pins" table. Check G (version-pin agreement) lands in PR 2 with the
+content that makes it pass.
 
 ## Links
 

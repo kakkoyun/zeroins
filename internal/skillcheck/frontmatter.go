@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
@@ -61,23 +62,18 @@ func parseFrontmatter(content []byte) (map[string]interface{}, string, error) {
 }
 
 // frontmatterString extracts a scalar string value from the frontmatter map.
-// Handles yaml.v3's decoding of block scalars (| and >) and quoted strings.
-func frontmatterString(raw map[string]interface{}, key string) (string, bool) {
+// Non-string YAML values (int, bool, etc.) are rejected: name and description
+// must be strings, not coerced text.
+func frontmatterString(raw map[string]interface{}, key string) (string, bool, error) {
 	val, ok := raw[key]
 	if !ok {
-		return "", false
+		return "", false, nil
 	}
 	switch v := val.(type) {
 	case string:
-		return strings.TrimSpace(v), true
-	case int:
-		return fmt.Sprintf("%d", v), true
-	case bool:
-		return fmt.Sprintf("%t", v), true
+		return strings.TrimSpace(v), true, nil
 	default:
-		// yaml.v3 decodes block scalars as strings, but fall back to the
-		// raw text if the type is unexpected.
-		return strings.TrimSpace(fmt.Sprintf("%v", v)), true
+		return "", true, fmt.Errorf("frontmatter key %q must be a string, got %T", key, val)
 	}
 }
 
@@ -99,17 +95,19 @@ func checkB(skills []Skill) []Failure {
 		}
 
 		// name
-		name, hasName := frontmatterString(s.Frontmatter, "name")
-		if !hasName || name == "" {
+		name, hasName, nameErr := frontmatterString(s.Frontmatter, "name")
+		if nameErr != nil {
+			fails = append(fails, Failure{Check: "B", Path: s.SkillPath, Msg: nameErr.Error()})
+		} else if !hasName || name == "" {
 			fails = append(fails, Failure{Check: "B", Path: s.SkillPath, Msg: "frontmatter: name is required"})
 		} else {
 			if name != s.Name {
 				fails = append(fails, Failure{Check: "B", Path: s.SkillPath,
 					Msg: fmt.Sprintf("frontmatter name %q does not match directory %q", name, s.Name)})
 			}
-			if len(name) > 64 {
+			if utf8.RuneCountInString(name) > 64 {
 				fails = append(fails, Failure{Check: "B", Path: s.SkillPath,
-					Msg: fmt.Sprintf("frontmatter name is %d chars, must be <= 64", len(name))})
+					Msg: fmt.Sprintf("frontmatter name is %d chars, must be <= 64", utf8.RuneCountInString(name))})
 			}
 			if !namePattern.MatchString(name) {
 				fails = append(fails, Failure{Check: "B", Path: s.SkillPath,
@@ -118,18 +116,23 @@ func checkB(skills []Skill) []Failure {
 		}
 
 		// description
-		desc, hasDesc := frontmatterString(s.Frontmatter, "description")
-		if !hasDesc || desc == "" {
+		desc, hasDesc, descErr := frontmatterString(s.Frontmatter, "description")
+		if descErr != nil {
+			fails = append(fails, Failure{Check: "B", Path: s.SkillPath, Msg: descErr.Error()})
+		} else if !hasDesc || desc == "" {
 			fails = append(fails, Failure{Check: "B", Path: s.SkillPath, Msg: "frontmatter: description is required and must be non-empty"})
-		} else if len(desc) > 1024 {
+		} else if utf8.RuneCountInString(desc) > 1024 {
 			fails = append(fails, Failure{Check: "B", Path: s.SkillPath,
-				Msg: fmt.Sprintf("frontmatter description is %d chars, must be <= 1024", len(desc))})
+				Msg: fmt.Sprintf("frontmatter description is %d chars, must be <= 1024", utf8.RuneCountInString(desc))})
 		}
 
 		// compatibility
-		if compat, ok := frontmatterString(s.Frontmatter, "compatibility"); ok && len(compat) > 500 {
+		compat, hasCompat, compatErr := frontmatterString(s.Frontmatter, "compatibility")
+		if compatErr != nil {
+			fails = append(fails, Failure{Check: "B", Path: s.SkillPath, Msg: compatErr.Error()})
+		} else if hasCompat && utf8.RuneCountInString(compat) > 500 {
 			fails = append(fails, Failure{Check: "B", Path: s.SkillPath,
-				Msg: fmt.Sprintf("frontmatter compatibility is %d chars, must be <= 500", len(compat))})
+				Msg: fmt.Sprintf("frontmatter compatibility is %d chars, must be <= 500", utf8.RuneCountInString(compat))})
 		}
 	}
 	return fails
