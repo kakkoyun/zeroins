@@ -103,18 +103,35 @@ exercise_obi_daemonset() {
 }
 
 exercise_obi_daemonset_duration() {
+  # Run the bounded attach in the background so traffic can flow while the
+  # observer is active. The attach blocks for 90s, then auto-detaches.
   zeroins obi attach --duration=90s \
-    --endpoint=http://telemetry-sink.default.svc.cluster.local:4318
+    --endpoint=http://telemetry-sink.default.svc.cluster.local:4318 &
+  local attach_pid=$!
+
+  # Wait for the DaemonSet to become ready before generating traffic.
+  local ds_ready=0
+  for _ in {1..24}; do
+    if kubectl get daemonset -l app.kubernetes.io/instance=obi -n obi-system -o jsonpath='{.items[0].status.numberReady}' 2>/dev/null | grep -E '^[1-9]' >/dev/null; then
+      ds_ready=1
+      break
+    fi
+    sleep 5
+  done
+  [[ ${ds_ready} -eq 1 ]] || fail 'OBI DaemonSet did not become ready during bounded attach'
+
   start_http_traffic
   if ! wait_for_log 'ResourceSpans|ResourceMetrics|ScopeSpans|ScopeMetrics' 180; then
     fail 'OBI did not export telemetry during bounded attach'
   fi
   kubectl delete pod traffic --wait=true --grace-period=1
+
   # Wait for the duration timer to fire and auto-detach.
   local elapsed=0
   while ((elapsed < 150)); do
     if ! helm status obi --namespace obi-system >/dev/null 2>&1; then
       printf 'Bounded attach auto-detached after %ds.\n' "${elapsed}"
+      wait ${attach_pid} 2>/dev/null || true
       return 0
     fi
     sleep 5
@@ -170,15 +187,32 @@ exercise_profiler() {
 
 exercise_sessions_reap() {
   # Create a deliberately orphaned expired session by attaching with a short
-  # duration and then killing the process before the timer fires.
-  zeroins obi attach --duration=5s \
+  # duration and then killing the process with SIGKILL before the timer fires.
+  zeroins obi attach --duration=30s \
     --endpoint=http://telemetry-sink.default.svc.cluster.local:4318 &
   local attach_pid=$!
-  sleep 2
-  kill "${attach_pid}" 2>/dev/null || true
-  # The session is now orphaned with a near-immediate expiry.
-  sleep 10
-  # Reap should find and detach the expired session.
+
+  # Wait until the managed session label and expiry annotation exist on the
+  # DaemonSet, so the orphan is discoverable by sessions reap.
+  local session_ready=0
+  for _ in {1..24}; do
+    if kubectl get daemonset -l zeroins.kakkoyun.dev/managed=true -n obi-system -o jsonpath='{.items[0].metadata.annotations.zeroins\.kakkoyun\.dev/expires-at}' 2>/dev/null | grep -E . >/dev/null; then
+      session_ready=1
+      break
+    fi
+    sleep 2
+  done
+  [[ ${session_ready} -eq 1 ]] || fail 'could not create orphaned session: managed label or expires-at annotation never appeared'
+
+  # SIGKILL the attach process so the bounded cleanup handler cannot run
+  # and the session is truly orphaned.
+  kill -9 "${attach_pid}" 2>/dev/null || true
+  wait "${attach_pid}" 2>/dev/null || true
+
+  # Wait for the expiry to pass.
+  sleep 35
+
+  # Reap should find and detach the expired orphaned session.
   zeroins sessions reap -A
   if helm status obi --namespace obi-system >/dev/null 2>&1; then
     fail 'sessions reap did not detach the orphaned expired OBI release'

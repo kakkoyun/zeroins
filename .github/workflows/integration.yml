@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   direct-host-ebpf-gate:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.label.name, 'run-integration')
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'run-integration'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

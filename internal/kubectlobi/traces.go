@@ -48,6 +48,9 @@ func newTracesCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if follow && format == output.FormatJSON {
+				return fmt.Errorf("--follow is incompatible with -o json: follow mode emits multiple documents")
+			}
 			return pullTraces(cmd.Context(), deps, args[0], namespace, tail, follow, string(format))
 		},
 	}

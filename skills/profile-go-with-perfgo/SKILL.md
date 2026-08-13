@@ -19,21 +19,28 @@ execution modes, collection modes, and the investigation loop.
 ## Install perfgo
 
 ```bash
-go install github.com/kakkoyun/perfgo@latest
+go install github.com/perfgo/perfgo@latest
+```
+
+Ensure `$(go env GOPATH)/bin` is on your `PATH`, then verify:
+
+```bash
+perfgo --help
 ```
 
 ## Execution modes
 
 perfgo has two execution modes:
 
-- **test** — runs a Go test binary under `perf record`, collects PMU counters,
-  and reports results. No cluster access required.
+- **test** — runs a Go test binary under `perf record`/`perf stat`, collects
+  PMU counters, and reports results. No cluster access required.
 - **attach** — deploys a privileged sidecar to a Kubernetes pod and profiles
   a running process. Requires cluster-admin-approved privileges.
 
 ## Collection modes
 
-Three collection modes select what perfgo measures:
+Three collection modes select what perfgo measures. They are subcommands under
+`test` or `attach`:
 
 - **stat** — collects PMU counter statistics (cycles, instructions, cache
   misses, branch misses). Lightweight, no perf record overhead.
@@ -44,13 +51,14 @@ Three collection modes select what perfgo measures:
 
 ## PMU event specification
 
-perfgo accepts PMU events with modifiers:
+Use `-e` to specify PMU events. Named events (`cache-misses`, `cycles`,
+`branch-misses`) and raw hex events (`rNNN`) are supported:
 
-- `cycles` — base cycle counter
-- `instructions` — retired instruction count
-- `cache-misses` — last-level cache misses
-- `branch-misses` — mispredicted branches
-- `raw<rNNN>` — raw PMU event by hex code
+```bash
+perfgo test stat -- ./your/package -bench=. -benchmem -run=^$
+perfgo test profile -e cache-misses -- ./your/package -bench=. -benchmem -run=^$
+perfgo test profile -e r076 -- ./your/package -bench=.
+```
 
 Modifiers appended with `:`:
 
@@ -58,24 +66,33 @@ Modifiers appended with `:`:
 - `:k` — kernel only
 - `:p<N>` — sample period (e.g. `:p100000`)
 
-Examples:
-
 ```bash
-perfgo test --mode=stat --event=cache-misses:u --event=cycles:u
-perfgo test --mode=profile --event=instructions:u:p100000
-perfgo test --mode=cache-to-cache
+perfgo test profile -e cache-misses:u -- ./your/package -bench=.
+perfgo test profile -e cycles:u:p100000 -- ./your/package -bench=.
 ```
+
+Raw event encodings are CPU/PMU-specific. Consult `perf list` or
+`/sys/bus/event_source/devices/cpu/format/` for your CPU's available events.
 
 ## Numbered investigation loop
 
-1. **Baseline** — run `perfgo test --mode=stat` to establish baseline PMU
+1. **Baseline** — run `perfgo test stat` to establish baseline PMU
    counters for the hot path.
-2. **Profile** — run `perfgo test --mode=profile` to collect a call graph and
+   ```bash
+   perfgo test stat -- ./your/package -bench=. -benchmem -run=^$
+   ```
+2. **Profile** — run `perfgo test profile` to collect a call graph and
    identify the hottest functions.
-3. **Drill** — use `--event` with specific PMU counters (cache-misses,
+   ```bash
+   perfgo test profile -e cache-misses -- ./your/package -bench=. -benchmem -run=^$
+   ```
+3. **Drill** — use `-e` with specific PMU counters (cache-misses,
    branch-misses) to classify the bottleneck.
-4. **Cache analysis** — if cache misses dominate, run `--mode=cache-to-cache`
+4. **Cache analysis** — if cache misses dominate, run `cache-to-cache`
    to measure inter-core transfer latency.
+   ```bash
+   perfgo test cache-to-cache -- ./your/package -bench=BenchmarkName -benchtime=10s -run=^$
+   ```
 5. **Iterate** — apply a fix, re-run from step 1, compare.
 
 ## Per-mode requirements

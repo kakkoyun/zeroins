@@ -31,6 +31,9 @@ func newValuesCommand(deps Dependencies) *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("values: encode sidecar patch: %w", err)
 				}
+				fmt.Fprintf(deps.Stderr, "# Sidecar patch template: original-share-process-namespace is a placeholder.\n")
+				fmt.Fprintf(deps.Stderr, "# attach fills it from the live deployment state.\n")
+				fmt.Fprintf(deps.Stderr, "# Session annotations (session-id, attached-at, etc.) are added after rollout.\n\n")
 				fmt.Fprint(deps.Stdout, string(data))
 				return nil
 			default:
@@ -47,7 +50,9 @@ func newValuesCommand(deps Dependencies) *cobra.Command {
 // sidecarPatchTemplate returns the strategic merge patch that attach would
 // apply for sidecar mode. The original-share-process-namespace annotation
 // depends on the live deployment state and is set to "unset" here as a
-// placeholder; attach fills it from the cluster.
+// placeholder; attach fills it from the cluster. Session annotations
+// (session-id, attached-at, expires-at, endpoint, mode) are added to the
+// Deployment's top-level metadata after rollout, not included in this patch.
 func sidecarPatchTemplate(endpoint string) map[string]any {
 	return map[string]any{
 		"spec": map[string]any{

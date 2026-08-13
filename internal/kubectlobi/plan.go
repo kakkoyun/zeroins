@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/kakkoyun/zeroins/internal/execx"
 	"github.com/kakkoyun/zeroins/internal/output"
@@ -16,6 +17,7 @@ type Plan struct {
 	Mode       string          `json:"mode"`
 	Deployment string          `json:"deployment,omitempty"`
 	Endpoint   string          `json:"endpoint,omitempty"`
+	Duration   string          `json:"duration,omitempty"`
 	Privilege  []string        `json:"privilege"`
 	Commands   []CommandArgv   `json:"commands"`
 	Values     json.RawMessage `json:"values,omitempty"`
@@ -88,6 +90,9 @@ func renderPlanTable(plan Plan, stdout io.Writer) {
 	if plan.Endpoint != "" {
 		fmt.Fprintf(stdout, "   endpoint:   %s\n", plan.Endpoint)
 	}
+	if plan.Duration != "" {
+		fmt.Fprintf(stdout, "   duration:   %s (then auto-detach)\n", plan.Duration)
+	}
 	fmt.Fprintln(stdout)
 
 	fmt.Fprintf(stdout, "2. Privilege impact\n")
@@ -152,13 +157,13 @@ func daemonSetPrivilegeImpact() []string {
 func sidecarPrivilegeImpact() []string {
 	return []string{
 		"privileged container in the deployment pod",
-		"host PID namespace",
-		"shareProcessNamespace set to true",
+		"shareProcessNamespace set to true (PID namespace shared among containers)",
+		"eBPF capabilities",
 		"deployment rollout (pod restart)",
 	}
 }
 
-func printDaemonSetPlan(deps Dependencies, namespace, endpoint, outputFormat string) error {
+func printDaemonSetPlan(deps Dependencies, namespace, endpoint string, duration time.Duration, outputFormat string) error {
 	values, err := daemonSetValues(endpoint)
 	if err != nil {
 		return fmt.Errorf("dry-run: build Helm values: %w", err)
@@ -180,10 +185,18 @@ func printDaemonSetPlan(deps Dependencies, namespace, endpoint, outputFormat str
 		},
 		Values: json.RawMessage(values),
 	}
+	if duration > 0 {
+		plan.Duration = duration.String()
+		plan.Commands = append(plan.Commands, CommandArgv{
+			Name: "(wait)", Args: []string{duration.String()},
+		}, CommandArgv{
+			Name: "helm", Args: []string{"uninstall", "obi", "--namespace", namespace, "--ignore-not-found"},
+		})
+	}
 	return printPlan(deps, plan, outputFormat)
 }
 
-func printSidecarPlan(deps Dependencies, deployment, namespace, endpoint, outputFormat string) error {
+func printSidecarPlan(deps Dependencies, deployment, namespace, endpoint string, duration time.Duration, outputFormat string) error {
 	patch := sidecarPatchTemplate(endpoint)
 	patchJSON, err := json.MarshalIndent(patch, "", "  ")
 	if err != nil {
@@ -201,8 +214,22 @@ func printSidecarPlan(deps Dependencies, deployment, namespace, endpoint, output
 			{Name: "kubectl", Args: []string{"patch", "deployment", deployment, "-n", namespace, "--type=strategic", "-p", "<patch-json>"}},
 			{Name: "kubectl", Args: []string{"rollout", "restart", "deployment/" + deployment, "-n", namespace}},
 			{Name: "kubectl", Args: []string{"rollout", "status", "deployment/" + deployment, "-n", namespace, "--timeout=120s"}},
+			{Name: "kubectl", Args: []string{"label", "deployment", deployment, "-n", namespace, "zeroins.kakkoyun.dev/managed=true", "--overwrite"}},
+			{Name: "kubectl", Args: []string{"annotate", "deployment", deployment, "-n", namespace, "--overwrite", "zeroins.kakkoyun.dev/session-id=<auto>", "zeroins.kakkoyun.dev/attached-at=<now>", "zeroins.kakkoyun.dev/endpoint=" + endpoint, "zeroins.kakkoyun.dev/mode=sidecar", "zeroins.kakkoyun.dev/tool=obi"}},
 		},
 		Patch: json.RawMessage(patchJSON),
+	}
+	if duration > 0 {
+		plan.Duration = duration.String()
+		plan.Commands = append(plan.Commands, CommandArgv{
+			Name: "(wait)", Args: []string{duration.String()},
+		}, CommandArgv{
+			Name: "kubectl", Args: []string{"patch", "deployment", deployment, "-n", namespace, "--type=strategic", "-p", "<detach-patch-json>"},
+		}, CommandArgv{
+			Name: "kubectl", Args: []string{"rollout", "restart", "deployment/" + deployment, "-n", namespace},
+		}, CommandArgv{
+			Name: "kubectl", Args: []string{"rollout", "status", "deployment/" + deployment, "-n", namespace, "--timeout=120s"},
+		})
 	}
 	return printPlan(deps, plan, outputFormat)
 }

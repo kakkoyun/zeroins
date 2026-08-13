@@ -264,8 +264,8 @@ func TestAttachSidecarRecordsStateAndIsIdempotent(t *testing.T) {
 	if err := attachSidecar(context.Background(), deps, "web", "prod", "https://collector:4318"); err != nil {
 		t.Fatalf("attachSidecar() error = %v", err)
 	}
-	if len(runner.calls) != 4 {
-		t.Fatalf("calls = %d, want 4", len(runner.calls))
+	if len(runner.calls) != 6 {
+		t.Fatalf("calls = %d, want 6", len(runner.calls))
 	}
 	patch := runner.calls[1].args[len(runner.calls[1].args)-1]
 	for _, want := range []string{managedAnnotation, originalShareAnnotation, `"false"`, obiImage, "OTEL_EBPF_AUTO_TARGET_EXE", "OTEL_EXPORTER_OTLP_ENDPOINT"} {
@@ -285,7 +285,7 @@ func TestAttachSidecarRecordsStateAndIsIdempotent(t *testing.T) {
 }
 
 func TestAttachSidecarUsesCurrentNamespace(t *testing.T) {
-	runner := &fakeRunner{responses: []runnerResponse{{output: "team-a"}, {output: deploymentJSON(false, nil, false, "")}, {}, {}, {}}}
+	runner := &fakeRunner{responses: []runnerResponse{{output: "team-a"}, {output: deploymentJSON(false, nil, false, "")}, {}, {}, {}, {}, {}}}
 	deps, _, stderr := testDeps(runner)
 	code := Main(context.Background(), []string{"attach", "web", "--mode", "sidecar", "--endpoint", "http://collector:4318"}, deps)
 	if code != 0 {
@@ -309,7 +309,7 @@ func TestDetachSidecarRestoresOriginalShareState(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			runner := &fakeRunner{responses: []runnerResponse{{output: deploymentJSON(true, test.share, true, test.original)}, {}, {}, {}}}
+			runner := &fakeRunner{responses: []runnerResponse{{output: deploymentJSON(true, test.share, true, test.original)}, {}, {}, {}, {}}}
 			deps, _, _ := testDeps(runner)
 			if err := detachSidecar(context.Background(), deps, "web", "prod"); err != nil {
 				t.Fatalf("detachSidecar() error = %v", err)

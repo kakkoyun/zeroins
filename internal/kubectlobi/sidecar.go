@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/kakkoyun/zeroins/internal/sessions"
 )
 
 const (
@@ -65,10 +67,10 @@ func originalShareValue(value *bool) string {
 }
 
 func attachSidecar(ctx context.Context, deps Dependencies, deployment, namespace, endpoint string) error {
-	return attachSidecarWithMeta(ctx, deps, deployment, namespace, endpoint, newSessionMeta(endpoint, "sidecar", 0))
+	return attachSidecarWithMeta(ctx, deps, deployment, namespace, endpoint, 0)
 }
 
-func attachSidecarWithMeta(ctx context.Context, deps Dependencies, deployment, namespace, endpoint string, meta sessionMeta) error {
+func attachSidecarWithMeta(ctx context.Context, deps Dependencies, deployment, namespace, endpoint string, duration time.Duration) error {
 	document, err := readDeployment(ctx, deps, deployment, namespace)
 	if err != nil {
 		return fmt.Errorf("attach sidecar: %w", err)
@@ -77,18 +79,23 @@ func attachSidecarWithMeta(ctx context.Context, deps Dependencies, deployment, n
 		if !document.managedByZeroins() {
 			return fmt.Errorf("attach sidecar: deployment already has an unmanaged container named obi")
 		}
+		if duration > 0 {
+			return fmt.Errorf("attach sidecar: deployment already has a zeroins-managed OBI sidecar; detach first before starting a bounded re-attach")
+		}
 		fmt.Fprintf(deps.Stderr, "Deployment %q already has a zeroins-managed OBI sidecar.\n", deployment)
 		return nil
 	}
 
-	annotations := sidecarAnnotations(meta)
-	annotations[originalShareAnnotation] = originalShareValue(document.Spec.Template.Spec.ShareProcessNamespace)
+	originalShare := originalShareValue(document.Spec.Template.Spec.ShareProcessNamespace)
 
 	patch := map[string]any{
 		"spec": map[string]any{
 			"template": map[string]any{
 				"metadata": map[string]any{
-					"annotations": annotations,
+					"annotations": map[string]any{
+						managedAnnotation:       "true",
+						originalShareAnnotation: originalShare,
+					},
 				},
 				"spec": map[string]any{
 					"shareProcessNamespace": true,
@@ -118,13 +125,48 @@ func attachSidecarWithMeta(ctx context.Context, deps Dependencies, deployment, n
 	if err := restartAndWait(ctx, deps, deployment, namespace, "attach sidecar"); err != nil {
 		return err
 	}
+
+	// Compute session metadata after attach completes so attached-at and
+	// expires-at reflect the actual start of the bounded window, not the
+	// pre-rollout timestamp.
+	meta := newSessionMeta(endpoint, "sidecar", duration)
+	if err := labelAndAnnotateDeployment(ctx, deps, deployment, namespace, meta); err != nil {
+		return fmt.Errorf("attach sidecar: %w", err)
+	}
 	fmt.Fprintf(deps.Stderr, "Session %s recorded on deployment/%s in %s.\n", meta.ID, deployment, namespace)
 	return nil
 }
 
+// labelAndAnnotateDeployment applies the managed label and session annotations
+// to the Deployment's top-level metadata so sessions list and sessions reap
+// can discover sidecar sessions.
+func labelAndAnnotateDeployment(ctx context.Context, deps Dependencies, deployment, namespace string, meta sessionMeta) error {
+	labelArgs := []string{"label", "deployment", deployment, "-n", namespace, sessions.ManagedLabel + "=" + sessions.ManagedLabelValue, "--overwrite"}
+	if _, err := deps.Runner.Run(ctx, "kubectl", labelArgs...); err != nil {
+		return fmt.Errorf("label deployment: %w", err)
+	}
+	annotations := map[string]string{
+		sessions.SessionIDAnnotation:  meta.ID,
+		sessions.AttachedAtAnnotation: meta.AttachedAt,
+		sessions.EndpointAnnotation:   meta.Endpoint,
+		sessions.ModeAnnotation:       meta.Mode,
+		sessions.ToolAnnotation:       "obi",
+	}
+	if meta.ExpiresAt != "" {
+		annotations[sessions.ExpiresAtAnnotation] = meta.ExpiresAt
+	}
+	annotateArgs := []string{"annotate", "deployment", deployment, "-n", namespace, "--overwrite"}
+	for key, value := range annotations {
+		annotateArgs = append(annotateArgs, key+"="+value)
+	}
+	if _, err := deps.Runner.Run(ctx, "kubectl", annotateArgs...); err != nil {
+		return fmt.Errorf("annotate deployment: %w", err)
+	}
+	return nil
+}
+
 func attachSidecarBounded(ctx context.Context, deps Dependencies, deployment, namespace, endpoint string, duration time.Duration) error {
-	meta := newSessionMeta(endpoint, "sidecar", duration)
-	if err := attachSidecarWithMeta(ctx, deps, deployment, namespace, endpoint, meta); err != nil {
+	if err := attachSidecarWithMeta(ctx, deps, deployment, namespace, endpoint, duration); err != nil {
 		return err
 	}
 	return runBoundedAttach(ctx, deps, duration, func(c context.Context) error {
@@ -183,6 +225,24 @@ func detachSidecar(ctx context.Context, deps Dependencies, deployment, namespace
 		return fmt.Errorf("detach sidecar: patch deployment: %w", err)
 	}
 	fmt.Fprint(deps.Stderr, out)
+
+	// Clear the managed label and session annotations from the Deployment's
+	// top-level metadata.
+	clearArgs := []string{"annotate", "deployment", deployment, "-n", namespace, "--overwrite",
+		sessions.ManagedLabel + "-",
+		sessions.SessionIDAnnotation + "-",
+		sessions.AttachedAtAnnotation + "-",
+		sessions.ExpiresAtAnnotation + "-",
+		sessions.EndpointAnnotation + "-",
+		sessions.ModeAnnotation + "-",
+		sessions.ToolAnnotation + "-",
+	}
+	if _, err := deps.Runner.Run(ctx, "kubectl", clearArgs...); err != nil {
+		// Non-fatal: the sidecar is already removed; stale annotations are
+		// harmless and sessions reap ignores resources without the managed label.
+		fmt.Fprintf(deps.Stderr, "warning: could not clear session annotations: %v\n", err)
+	}
+
 	return restartAndWait(ctx, deps, deployment, namespace, "detach sidecar")
 }
 

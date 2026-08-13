@@ -74,7 +74,8 @@ func List(ctx context.Context, deps Dependencies, allNamespaces bool, format str
 	return nil
 }
 
-// Reap detaches every expired managed session.
+// Reap detaches every expired managed session. Returns an aggregate error
+// if any detach failed, so automation can detect incomplete cleanup.
 func Reap(ctx context.Context, deps Dependencies, allNamespaces, dryRun bool) error {
 	sessions, err := querySessions(ctx, deps, allNamespaces)
 	if err != nil {
@@ -82,7 +83,8 @@ func Reap(ctx context.Context, deps Dependencies, allNamespaces, dryRun bool) er
 	}
 
 	now := nowFunc()
-	var reaped, skipped int
+	var reaped, skipped, failed int
+	var failures []string
 	for _, s := range sessions {
 		if s.ExpiresAt == "" {
 			skipped++
@@ -105,13 +107,18 @@ func Reap(ctx context.Context, deps Dependencies, allNamespaces, dryRun bool) er
 		}
 		if err := detachSession(ctx, deps, s); err != nil {
 			fmt.Fprintf(deps.Stderr, "session %s: detach failed: %v\n", s.ID, err)
+			failed++
+			failures = append(failures, s.ID)
 			continue
 		}
 		fmt.Fprintf(deps.Stderr, "reaped expired session %s\n", s.ID)
 		reaped++
 	}
 
-	fmt.Fprintf(deps.Stderr, "sessions reap: %d reaped, %d skipped\n", reaped, skipped)
+	fmt.Fprintf(deps.Stderr, "sessions reap: %d reaped, %d skipped, %d failed\n", reaped, skipped, failed)
+	if failed > 0 {
+		return fmt.Errorf("sessions reap: %d session(s) failed to detach: %s", failed, strings.Join(failures, ", "))
+	}
 	return nil
 }
 

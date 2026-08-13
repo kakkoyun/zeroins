@@ -96,6 +96,9 @@ func newAttachCommand(deps Dependencies) *cobra.Command {
 			if err := validateGRPCEndpoint(endpoint); err != nil {
 				return err
 			}
+			if duration < 0 {
+				return fmt.Errorf("duration must be positive; got %s", duration)
+			}
 			if dryRun {
 				return printProfilerPlan(deps, namespace, endpoint, insecure, outputFormat)
 			}

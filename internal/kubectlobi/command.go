@@ -106,6 +106,9 @@ func newAttachCommand(deps Dependencies) *cobra.Command {
 			if err := validateOTLPEndpoint(endpoint); err != nil {
 				return err
 			}
+			if duration < 0 {
+				return fmt.Errorf("duration must be positive; got %s", duration)
+			}
 			switch mode {
 			case "daemonset":
 				if len(args) != 0 {
@@ -115,7 +118,7 @@ func newAttachCommand(deps Dependencies) *cobra.Command {
 					namespace = defaultNS
 				}
 				if dryRun {
-					return printDaemonSetPlan(deps, namespace, endpoint, outputFormat)
+					return printDaemonSetPlan(deps, namespace, endpoint, duration, outputFormat)
 				}
 				if duration > 0 {
 					return attachDaemonSetBounded(cmd.Context(), deps, namespace, endpoint, duration)
@@ -133,7 +136,7 @@ func newAttachCommand(deps Dependencies) *cobra.Command {
 					}
 				}
 				if dryRun {
-					return printSidecarPlan(deps, args[0], namespace, endpoint, outputFormat)
+					return printSidecarPlan(deps, args[0], namespace, endpoint, duration, outputFormat)
 				}
 				if duration > 0 {
 					return attachSidecarBounded(cmd.Context(), deps, args[0], namespace, endpoint, duration)
@@ -203,10 +206,10 @@ func daemonSetValues(endpoint string) ([]byte, error) {
 }
 
 func attachDaemonSet(ctx context.Context, deps Dependencies, namespace, endpoint string) error {
-	return attachDaemonSetWithMeta(ctx, deps, namespace, endpoint, newSessionMeta(endpoint, "daemonset", 0))
+	return attachDaemonSetWithMeta(ctx, deps, namespace, endpoint, 0)
 }
 
-func attachDaemonSetWithMeta(ctx context.Context, deps Dependencies, namespace, endpoint string, meta sessionMeta) error {
+func attachDaemonSetWithMeta(ctx context.Context, deps Dependencies, namespace, endpoint string, duration time.Duration) error {
 	values, err := daemonSetValues(endpoint)
 	if err != nil {
 		return fmt.Errorf("attach daemonset: build Helm values: %w", err)
@@ -258,6 +261,9 @@ func attachDaemonSetWithMeta(ctx context.Context, deps Dependencies, namespace, 
 	}
 	fmt.Fprint(deps.Stderr, out)
 
+	// Compute session metadata after attach completes so attached-at and
+	// expires-at reflect the actual start of the bounded window.
+	meta := newSessionMeta(endpoint, "daemonset", duration)
 	if err := labelAndAnnotateDaemonSet(ctx, deps, strings.TrimSpace(dsName), namespace, meta); err != nil {
 		return fmt.Errorf("attach daemonset: %w", err)
 	}
@@ -266,8 +272,7 @@ func attachDaemonSetWithMeta(ctx context.Context, deps Dependencies, namespace, 
 }
 
 func attachDaemonSetBounded(ctx context.Context, deps Dependencies, namespace, endpoint string, duration time.Duration) error {
-	meta := newSessionMeta(endpoint, "daemonset", duration)
-	if err := attachDaemonSetWithMeta(ctx, deps, namespace, endpoint, meta); err != nil {
+	if err := attachDaemonSetWithMeta(ctx, deps, namespace, endpoint, duration); err != nil {
 		return err
 	}
 	return runBoundedAttach(ctx, deps, duration, func(c context.Context) error {
