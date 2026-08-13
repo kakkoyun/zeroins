@@ -66,3 +66,47 @@ jobs:
         env:
           ZEROINS_VALIDATE_PROFILER_IMAGE: "1"
         run: make check/helm
+
+  zeroins-smoke:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: stable
+      - name: Build zeroins
+        run: go build -o /tmp/zeroins ./cmd/zeroins
+      - name: Smoke test lookup commands
+        run: |
+          set -euo pipefail
+          /tmp/zeroins obi lookup net/http
+          /tmp/zeroins obi lookup net/http -o json | jq .tool
+          /tmp/zeroins obi lookup net/http -o markdown | head -1 | grep -F '# OBI'
+          /tmp/zeroins otelc lookup net/http
+          /tmp/zeroins otelc lookup net/http -o json | jq .tool
+      - name: Smoke test values commands (no cluster access)
+        run: |
+          set -euo pipefail
+          /tmp/zeroins obi values --endpoint=https://collector.example:4318 | grep OTEL_EXPORTER_OTLP_ENDPOINT
+          /tmp/zeroins obi values --mode=sidecar --endpoint=https://collector.example:4318 | grep shareProcessNamespace
+          /tmp/zeroins profiler values --endpoint=profiles.example:4317 | grep profiles.example:4317
+      - name: Smoke test dry-run commands (no cluster access, no mutations)
+        run: |
+          set -euo pipefail
+          /tmp/zeroins obi attach --dry-run --endpoint=https://collector.example:4318 | grep -F 'Plan'
+          /tmp/zeroins obi attach --dry-run -o json --endpoint=https://collector.example:4318 | jq .mode
+          /tmp/zeroins profiler attach --dry-run --endpoint=profiles.example:4317 | grep -F 'tracefs'
+          /tmp/zeroins profiler attach --dry-run -o json --endpoint=profiles.example:4317 | jq .mode
+      - name: Smoke test version
+        run: |
+          set -euo pipefail
+          /tmp/zeroins version | grep -F 'zeroins:'
+          /tmp/zeroins version -o json | jq .tool
+      - name: Smoke test doctor fails gracefully without a cluster
+        run: |
+          set -euo pipefail
+          if /tmp/zeroins doctor 2>/dev/null; then
+            echo 'doctor unexpectedly succeeded without a cluster' >&2
+            exit 1
+          fi
+          echo 'doctor correctly failed without a cluster'

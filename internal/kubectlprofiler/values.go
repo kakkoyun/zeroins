@@ -21,7 +21,7 @@ func newValuesCommand(deps Dependencies) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("values: build Helm values: %w", err)
 			}
-			fmt.Fprintln(deps.Stdout, string(values))
+			fmt.Fprint(deps.Stdout, string(values))
 			return nil
 		},
 	}

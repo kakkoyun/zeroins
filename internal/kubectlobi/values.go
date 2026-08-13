@@ -23,7 +23,7 @@ func newValuesCommand(deps Dependencies) *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("values: build Helm values: %w", err)
 				}
-				fmt.Fprintln(deps.Stdout, string(values))
+				fmt.Fprint(deps.Stdout, string(values))
 				return nil
 			case "sidecar":
 				patch := sidecarPatchTemplate(endpoint)
@@ -31,7 +31,7 @@ func newValuesCommand(deps Dependencies) *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("values: encode sidecar patch: %w", err)
 				}
-				fmt.Fprintln(deps.Stdout, string(data))
+				fmt.Fprint(deps.Stdout, string(data))
 				return nil
 			default:
 				return fmt.Errorf("unknown mode %q; choose daemonset or sidecar", mode)

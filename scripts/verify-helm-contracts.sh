@@ -75,6 +75,22 @@ main() {
     --set-string 'env.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=https://collector.example:4318/v1/metrics' \
     --set-string 'env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://collector.example:4318/v1/traces' \
     >"${obi_manifest}"
+
+  # Contract: zeroins obi values must produce values that render identically to the
+  # --set-string approach above, so `values` and `--dry-run` cannot drift from reality.
+  local obi_values_file="${temporary_directory}/obi-values.json"
+  go run ./cmd/zeroins obi values \
+    --endpoint=https://collector.example:4318 \
+    --mode=daemonset >"${obi_values_file}"
+  local obi_manifest_from_values="${temporary_directory}/obi-from-values.yaml"
+  helm template obi open-telemetry/opentelemetry-ebpf-instrumentation \
+    --version "${OBI_CHART_VERSION}" \
+    --namespace obi-system \
+    --values "${obi_values_file}" \
+    >"${obi_manifest_from_values}"
+  if ! diff -u "${obi_manifest}" "${obi_manifest_from_values}" >/dev/null; then
+    fail 'OBI manifest from zeroins obi values differs from the --set-string reference manifest'
+  fi
   require_match 'kind: DaemonSet' "${obi_manifest}"
   require_match 'privileged: true' "${obi_manifest}"
   require_match 'OTEL_EXPORTER_OTLP_ENDPOINT' "${obi_manifest}"
@@ -90,6 +106,16 @@ main() {
   go run ./tools/render-profiler-values profiles.example:4317 >"${profiler_values}"
   [[ $(stat -f '%Lp' "${profiler_values}" 2>/dev/null || stat -c '%a' "${profiler_values}") == '600' ]] ||
     chmod 0600 "${profiler_values}"
+
+  # Contract: zeroins profiler values must produce byte-identical output to
+  # tools/render-profiler-values, so `values` and `--dry-run` cannot drift from reality.
+  # tools/render-profiler-values uses insecure=true, so match that here.
+  local profiler_values_from_cmd="${temporary_directory}/profiler-values-from-cmd.json"
+  go run ./cmd/zeroins profiler values \
+    --endpoint=profiles.example:4317 --insecure >"${profiler_values_from_cmd}"
+  if ! diff -u "${profiler_values}" "${profiler_values_from_cmd}" >/dev/null; then
+    fail 'zeroins profiler values output differs from tools/render-profiler-values'
+  fi
 
   local profiler_manifest="${temporary_directory}/profiler.yaml"
   helm template profiler open-telemetry/opentelemetry-collector \
