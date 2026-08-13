@@ -46,8 +46,12 @@ npx skills add kakkoyun/zeroins --all
 
 | Skill | Path | Description |
 | --- | --- | --- |
-| `collect-go-telemetry` | `skills/collect-go-telemetry/` | Choose and operate zero-code Go telemetry tools through the unified zeroins command. Requires explicit confirmation before cluster mutations. |
-| `profile-go-with-perfgo` | `skills/profile-go-with-perfgo/` | Profile Go code with perfgo for microarchitectural analysis. Covers test and attach modes, PMU events, and the investigation loop. |
+| `collect-go-telemetry` | `skills/collect-go-telemetry/` | Choose and operate zero-code Go telemetry tools through the unified zeroins command. The spine: mandatory 7-step workflow, tool selection, preflight, session audit. |
+| `zeroins-catalog-lookup` | `skills/zeroins-catalog-lookup/` | Search OBI and otelc Go-library support catalogs. Covers output modes and deprecated shims. |
+| `zeroins-otelc-build` | `skills/zeroins-otelc-build/` | Build Go binaries with otelc compile-time instrumentation. Go 1.25+ floor, injection verification, non-Linux targets. |
+| `zeroins-obi-attach` | `skills/zeroins-obi-attach/` | Attach, inspect, query, and detach OBI in Kubernetes. DaemonSet and sidecar modes, endpoint rules, traces. |
+| `zeroins-ebpf-profiler-attach` | `skills/zeroins-ebpf-profiler-attach/` | Deploy, inspect, and remove the eBPF Profiler. OTLP/gRPC endpoint, TLS, pinned components. |
+| `profile-go-with-perfgo` | `skills/profile-go-with-perfgo/` | Profile Go code with perfgo for microarchitectural analysis. Test and attach modes, PMU events, investigation loop. |
 
 ## Repository Structure
 
@@ -55,8 +59,22 @@ npx skills add kakkoyun/zeroins --all
 skills/
   collect-go-telemetry/
     SKILL.md
+    references/
+  zeroins-catalog-lookup/
+    SKILL.md
+    references/
+  zeroins-otelc-build/
+    SKILL.md
+    references/
+  zeroins-obi-attach/
+    SKILL.md
+    references/
+  zeroins-ebpf-profiler-attach/
+    SKILL.md
+    references/
   profile-go-with-perfgo/
     SKILL.md
+    references/
 ```
 
 ## Typical workflow

@@ -11,7 +11,27 @@
     {
       "name": "collect-go-telemetry",
       "source": "./skills/collect-go-telemetry",
-      "description": "Choose and operate zero-code Go telemetry tools through the unified zeroins command. Compares OBI runtime instrumentation, otelc compile-time instrumentation, and the OpenTelemetry eBPF Profiler. Requires explicit confirmation before cluster mutations."
+      "description": "Choose and operate zero-code Go telemetry tools through the unified zeroins command. This is the spine: it owns the mandatory 7-step workflow, tool selection, preflight, session audit, and boundaries."
+    },
+    {
+      "name": "zeroins-catalog-lookup",
+      "source": "./skills/zeroins-catalog-lookup",
+      "description": "Search OBI and otelc Go-library support catalogs through zeroins. Covers output modes and the deprecated obi-integration and otelc-aspect shims."
+    },
+    {
+      "name": "zeroins-otelc-build",
+      "source": "./skills/zeroins-otelc-build",
+      "description": "Build Go binaries with otelc compile-time instrumentation. Covers the otelc go build command, the Go 1.25+ floor, injection verification, and non-Linux targets."
+    },
+    {
+      "name": "zeroins-obi-attach",
+      "source": "./skills/zeroins-obi-attach",
+      "description": "Attach, inspect, query, and detach OBI in Kubernetes through zeroins. Covers DaemonSet and sidecar modes, endpoint rules, traces queries, and session cleanup."
+    },
+    {
+      "name": "zeroins-ebpf-profiler-attach",
+      "source": "./skills/zeroins-ebpf-profiler-attach",
+      "description": "Deploy, inspect, and remove the OpenTelemetry eBPF Profiler through zeroins. Covers the OTLP/gRPC profiles endpoint, TLS and insecure transport, pinned chart and image versions, and session cleanup."
     },
     {
       "name": "profile-go-with-perfgo",

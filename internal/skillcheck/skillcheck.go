@@ -56,6 +56,8 @@ func Run(root string, w io.Writer) error {
 	fails = append(fails, mpFails...)
 	fails = append(fails, readmeFails...)
 	fails = append(fails, checkE(root, skills)...)
+	fails = append(fails, checkF(root, skills)...)
+	fails = append(fails, checkG(root, skills)...)
 	fails = append(fails, checkH(root, skills)...)
 
 	if len(fails) == 0 {
