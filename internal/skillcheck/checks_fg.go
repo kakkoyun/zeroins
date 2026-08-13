@@ -90,16 +90,22 @@ func checkF(root string, skills []Skill) []Failure {
 	return fails
 }
 
+// gateLinkPattern matches a Markdown link whose destination is
+// references/confirmation-gate.md, e.g. [text](references/confirmation-gate.md).
+// A bare mention of the path (in prose, HTML comments, or code) does not match.
+var gateLinkPattern = regexp.MustCompile(`\[[^]]*\]\(references/confirmation-gate\.md\)`)
+
 // checkGateLinkOrder verifies that the SKILL.md links to
 // references/confirmation-gate.md before the first fenced code block containing
 // attach or detach.
 func checkGateLinkOrder(s Skill) error {
 	content := string(s.Content)
 
-	gateLinkIdx := strings.Index(content, "references/confirmation-gate.md")
-	if gateLinkIdx < 0 {
+	gateMatch := gateLinkPattern.FindStringIndex(content)
+	if gateMatch == nil {
 		return fmt.Errorf("SKILL.md does not link to references/confirmation-gate.md")
 	}
+	gateLinkIdx := gateMatch[0]
 
 	lines := strings.Split(content, "\n")
 	inFence := false

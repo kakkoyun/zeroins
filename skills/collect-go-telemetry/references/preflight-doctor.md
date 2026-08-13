@@ -28,6 +28,8 @@ output for agent consumption.
 
 ## When doctor cannot run
 
-If the cluster is unreachable, doctor exits 1. Proceed only while explicitly
-recording preflight as unverified. Never claim preflight passed when it did
-not run.
+If the cluster is unreachable, doctor exits 1. This is a hard failure: abort
+and do not attempt an attach. If doctor literally cannot run (no kubectl, no
+kubeconfig), record preflight as unverified and do not proceed without
+explicit user acknowledgment that preflight was not performed. Never claim
+preflight passed when it did not run or exited non-zero.

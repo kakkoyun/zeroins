@@ -38,7 +38,7 @@ perfgo --help
 - **attach** — deploys a privileged sidecar to a Kubernetes pod and profiles
   a running process. Requires cluster-admin-approved privileges.
 
-Do not run `attach` or `detach` until the checklist in
+Do not run `attach` until the checklist in
 [confirmation gate](references/confirmation-gate.md) is complete and the user
 has explicitly approved. See [perfgo attach notes](references/perfgo-attach-notes.md)
 for perfgo-specific gate items.
@@ -69,18 +69,24 @@ perfgo test profile -e cache-misses -- ./your/package -bench=. -benchmem -run=^$
 ## Numbered investigation loop
 
 1. **Baseline** — run `perfgo test stat` to establish baseline PMU counters.
+
    ```bash
    perfgo test stat -- ./your/package -bench=. -benchmem -run=^$
    ```
+
 2. **Profile** — run `perfgo test profile` to collect a call graph.
+
    ```bash
    perfgo test profile -e cache-misses -- ./your/package -bench=. -benchmem -run=^$
    ```
+
 3. **Drill** — use `-e` with specific PMU counters to classify the bottleneck.
 4. **Cache analysis** — if cache misses dominate, run `cache-to-cache`.
+
    ```bash
    perfgo test cache-to-cache -- ./your/package -bench=BenchmarkName -benchtime=10s -run=^$
    ```
+
 5. **Iterate** — apply a fix, re-run from step 1, compare.
 
 ## Boundaries

@@ -28,12 +28,15 @@ Modifiers are appended with `:`:
 
 - `:u` — user-space only
 - `:k` — kernel only
-- `:p<N>` — sample period (e.g. `:p100000`)
+- `:p` — precise-event sampling (reduces skid)
+
+Use `perfgo test stat --count N` or `perfgo test profile --count N` to set
+the sample period (how often perf takes a sample).
 
 ```bash
 perfgo test profile -e cache-misses:u -- ./your/package -bench=.
-perfgo test profile -e cycles:u:p100000 -- ./your/package -bench=.
+perfgo test profile -e cycles:u -- ./your/package -bench=.
 ```
 
-Modifiers can be combined: `cycles:u:p100000` means user-space cycles with a
-sample period of 100000.
+Modifiers can be combined: `cycles:u:p` means user-space cycles with precise
+event sampling.

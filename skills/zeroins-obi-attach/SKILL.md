@@ -82,7 +82,8 @@ zeroins obi attach --duration=15m \
 ## Confirm telemetry
 
 ```bash
-zeroins obi traces checkout --namespace=production --tail=20
+OTEL_BACKEND=https://jaeger.example \
+  zeroins obi traces checkout --namespace=production --tail=20
 ```
 
 See [traces query](references/traces-query.md) for the Jaeger-compatible API.

@@ -28,8 +28,10 @@ The privileged sidecar has:
 
 ## Profiling duration
 
-State the profiling duration explicitly. An unbounded attach needs a manual
-detach and a `sessions` entry. Prefer `--duration` for exploratory runs.
+State the profiling duration explicitly. perfgo attach runs until the
+command exits or is interrupted; the temporary profiling pod is deleted on
+exit. Prefer an explicit duration or signal-based termination for
+exploratory runs.
 
 ## Per-mode requirements
 

@@ -23,17 +23,17 @@ go install go.opentelemetry.io/otelc/tool/cmd/otelc@v1.0.1
 ## Build
 
 ```bash
-otelc go build -o ./myapp ./...
+otelc go build -o ./myapp ./cmd/myapp
 ```
 
 ## Verify injection
 
-Confirm that instrumentation ran. See
-[build verification](references/build-verification.md) for what to check and
+After building, check `.otelc-build/matched.json` for the rules that fired.
+See [build verification](references/build-verification.md) for what to check and
 common failure modes.
 
 ```bash
-otelc go build -v ./... 2>&1 | grep -i inject
+cat .otelc-build/matched.json | jq .
 ```
 
 ## Non-Linux targets

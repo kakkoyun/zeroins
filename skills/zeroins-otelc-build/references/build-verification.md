@@ -2,15 +2,16 @@
 
 After running `otelc go build`, verify that instrumentation was injected.
 
-## Check the build output
+## Check the matched rules artifact
+
+otelc writes the rules that fired to `.otelc-build/matched.json`:
 
 ```bash
-otelc go build -v ./... 2>&1 | grep -i inject
+cat .otelc-build/matched.json | jq .
 ```
 
-The verbose output should show injection messages for the packages in the
-otelc catalog. If no injection messages appear, the build may have silently
-skipped instrumentation.
+The JSON lists the instrumentation rules that matched packages in your module.
+If the file is missing or empty, instrumentation did not run.
 
 ## Common failure modes
 

@@ -63,7 +63,7 @@ skills/
 
 ## Gate-bearing skills
 
-Four skills can mutate a cluster and will carry a confirmation gate:
+Four skills can mutate a cluster and carry a confirmation gate:
 
 - `collect-go-telemetry` — the spine; its `references/confirmation-gate.md` is
   the canonical copy
@@ -71,16 +71,16 @@ Four skills can mutate a cluster and will carry a confirmation gate:
 - `zeroins-ebpf-profiler-attach`
 - `profile-go-with-perfgo`
 
-`references/confirmation-gate.md` will ship byte-identical in all four. The
+`references/confirmation-gate.md` ships byte-identical in all four. The
 canonical copy is `skills/collect-go-telemetry/references/confirmation-gate.md`.
-Check F (byte-identity and link ordering) lands in PR 2 with the content that
-makes it pass.
+`make check/skills` verifies byte-identity (check F) and that each
+gate-bearing SKILL.md links to it before the first fenced block containing
+`attach` or `detach`.
 
 ## Version pins
 
 Version pins quoted anywhere under `skills/**` must agree with the README
-"Version pins" table. Check G (version-pin agreement) lands in PR 2 with the
-content that makes it pass.
+"Version pins" table. `make check/skills` verifies this (check G).
 
 ## Links
 
