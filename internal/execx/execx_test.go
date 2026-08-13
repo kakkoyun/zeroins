@@ -33,3 +33,26 @@ func TestOSRunnerHonorsCancellation(t *testing.T) {
 		t.Fatalf("context error = %v", ctx.Err())
 	}
 }
+
+func TestOSRunnerOutputExcludesStderr(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell assertion is Unix-specific")
+	}
+	out, err := (OSRunner{}).Output(context.Background(), "sh", "-c", "printf stdout; printf stderr >&2")
+	if err != nil {
+		t.Fatalf("Output() error = %v", err)
+	}
+	if out != "stdout" {
+		t.Fatalf("Output() = %q, want %q (stderr must be excluded)", out, "stdout")
+	}
+}
+
+func TestOSRunnerOutputIncludesStderrInError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell assertion is Unix-specific")
+	}
+	_, err := (OSRunner{}).Output(context.Background(), "sh", "-c", "printf failure >&2; exit 7")
+	if err == nil || !strings.Contains(err.Error(), "failure") {
+		t.Fatalf("Output() error = %v, want one containing stderr", err)
+	}
+}

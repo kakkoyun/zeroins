@@ -35,3 +35,35 @@ func TestRun(t *testing.T) {
 		})
 	}
 }
+
+func TestLookupTableFormat(t *testing.T) {
+	var stdout bytes.Buffer
+	matches := Lookup("net/http")
+	Render(matches, "net/http", FormatTable, &stdout)
+	output := stdout.String()
+	if !strings.Contains(output, "LIBRARY") || !strings.Contains(output, "BASELINE") {
+		t.Fatalf("table format missing headers: %s", output)
+	}
+	if !strings.Contains(output, "net/http") || !strings.Contains(output, ">= 1.17") {
+		t.Fatalf("table format missing data: %s", output)
+	}
+}
+
+func TestLookupJSONFormat(t *testing.T) {
+	var stdout bytes.Buffer
+	matches := Lookup("net/http")
+	Render(matches, "net/http", FormatJSON, &stdout)
+	output := stdout.String()
+	if !strings.Contains(output, `"tool": "obi"`) || !strings.Contains(output, `"library": "net/http"`) {
+		t.Fatalf("json format missing fields: %s", output)
+	}
+}
+
+func TestMarkdownFormatReproducesOldBytes(t *testing.T) {
+	var stdout1, stdout2 bytes.Buffer
+	Run([]string{"net/http"}, &stdout1, &bytes.Buffer{})
+	RunFormat([]string{"net/http"}, FormatMarkdown, &stdout2, &bytes.Buffer{})
+	if stdout1.String() != stdout2.String() {
+		t.Fatalf("markdown format does not reproduce old bytes:\nold: %q\nnew: %q", stdout1.String(), stdout2.String())
+	}
+}

@@ -4,7 +4,7 @@ GO_FILES := $(shell find cmd internal tools -name '*.go' -type f -print | sort)
 
 .DEFAULT_GOAL := help
 
-.PHONY: build test fmt lint crossbuild check check/helm check/integration install help
+.PHONY: build test fmt lint crossbuild check check/helm check/integration check/examples install help
 
 build:
 	go build ./...
@@ -40,10 +40,13 @@ crossbuild:
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build ./...
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ./...
 
-check: lint build test crossbuild
+check: lint build test crossbuild check/examples
 
 check/helm:
 	./scripts/verify-helm-contracts.sh
+
+check/examples:
+	./scripts/check-examples-drift.sh
 
 check/integration:
 	./scripts/integration-linux.sh
@@ -60,5 +63,6 @@ help:
 	@printf '%s\n' '  make crossbuild         Build Linux, Darwin, and Windows targets'
 	@printf '%s\n' '  make check              Run lint, build, tests, and cross-builds'
 	@printf '%s\n' '  make check/helm         Render and validate pinned Helm chart contracts'
+	@printf '%s\n' '  make check/examples     Assert examples fixtures match integration references'
 	@printf '%s\n' '  make check/integration  Run the live Linux release gate'
 	@printf '%s\n' '  make install            Install all four commands locally'

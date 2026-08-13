@@ -39,7 +39,7 @@ func TestPullTracesSuccessAndNamespaceTag(t *testing.T) {
 	}))
 	defer server.Close()
 	deps, stdout := traceDependencies(server.URL, nil)
-	if err := pullTraces(context.Background(), deps, "checkout service", "prod/team", 7, false); err != nil {
+	if err := pullTraces(context.Background(), deps, "checkout service", "prod/team", 7, false, "table"); err != nil {
 		t.Fatalf("pullTraces() error = %v", err)
 	}
 	if requestURL.Query().Get("service") != "checkout service" || requestURL.Query().Get("limit") != "7" {
@@ -59,7 +59,7 @@ func TestPullTracesEmpty(t *testing.T) {
 	}))
 	defer server.Close()
 	deps, stdout := traceDependencies(server.URL, nil)
-	if err := pullTraces(context.Background(), deps, "web", "", 20, false); err != nil {
+	if err := pullTraces(context.Background(), deps, "web", "", 20, false, "table"); err != nil {
 		t.Fatalf("pullTraces() error = %v", err)
 	}
 	if !strings.Contains(stdout.String(), "No traces found") {
@@ -88,7 +88,7 @@ func TestPullTracesFailures(t *testing.T) {
 			}))
 			defer server.Close()
 			deps, _ := traceDependencies(server.URL, nil)
-			err := pullTraces(context.Background(), deps, "web", "", 20, false)
+			err := pullTraces(context.Background(), deps, "web", "", 20, false, "table")
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("pullTraces() error = %v, want %q", err, test.want)
 			}
@@ -103,7 +103,7 @@ func TestPullTracesTimeout(t *testing.T) {
 	}))
 	defer server.Close()
 	deps, _ := traceDependencies(server.URL, &http.Client{Timeout: 10 * time.Millisecond})
-	err := pullTraces(context.Background(), deps, "web", "", 20, false)
+	err := pullTraces(context.Background(), deps, "web", "", 20, false, "table")
 	if err == nil || !strings.Contains(err.Error(), "Client.Timeout") {
 		t.Fatalf("pullTraces() error = %v, want timeout", err)
 	}
@@ -121,7 +121,7 @@ func TestPullTracesFollowCancellation(t *testing.T) {
 		cancel()
 	}()
 	start := time.Now()
-	if err := pullTraces(ctx, deps, "web", "", 20, true); err != nil {
+	if err := pullTraces(ctx, deps, "web", "", 20, true, "table"); err != nil {
 		t.Fatalf("pullTraces() error = %v", err)
 	}
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {

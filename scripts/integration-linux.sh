@@ -5,6 +5,7 @@ set -o nounset
 set -o pipefail
 
 readonly PROFILER_IMAGE='otel/opentelemetry-collector-ebpf-profiler:0.158.0'
+readonly FIXTURES_DIR="${PWD}/examples/_fixtures"
 
 temporary_directory=''
 
@@ -72,138 +73,21 @@ preflight() {
 }
 
 deploy_sink_and_workload() {
-  kubectl apply -f - <<'YAML'
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: telemetry-sink
-  namespace: default
-data:
-  relay.yaml: |
-    receivers:
-      otlp:
-        protocols:
-          grpc:
-            endpoint: 0.0.0.0:4317
-          http:
-            endpoint: 0.0.0.0:4318
-    exporters:
-      debug:
-        verbosity: detailed
-    service:
-      pipelines:
-        traces:
-          receivers: [otlp]
-          exporters: [debug]
-        metrics:
-          receivers: [otlp]
-          exporters: [debug]
-        profiles:
-          receivers: [otlp]
-          exporters: [debug]
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: telemetry-sink
-  namespace: default
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: telemetry-sink
-  template:
-    metadata:
-      labels:
-        app: telemetry-sink
-    spec:
-      containers:
-        - name: collector
-          image: otel/opentelemetry-collector-contrib:0.158.0
-          args:
-            - --feature-gates=+service.profilesSupport
-            - --config=/conf/relay.yaml
-          ports:
-            - name: otlp-grpc
-              containerPort: 4317
-            - name: otlp-http
-              containerPort: 4318
-          volumeMounts:
-            - name: config
-              mountPath: /conf
-      volumes:
-        - name: config
-          configMap:
-            name: telemetry-sink
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: telemetry-sink
-  namespace: default
-spec:
-  selector:
-    app: telemetry-sink
-  ports:
-    - name: otlp-grpc
-      port: 4317
-      targetPort: otlp-grpc
-    - name: otlp-http
-      port: 4318
-      targetPort: otlp-http
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: sample-http
-  namespace: default
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: sample-http
-  template:
-    metadata:
-      labels:
-        app: sample-http
-    spec:
-      containers:
-        - name: nginx
-          image: nginx:1.27-alpine
-          ports:
-            - name: http
-              containerPort: 80
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: sample-http
-  namespace: default
-spec:
-  selector:
-    app: sample-http
-  ports:
-    - name: http
-      port: 80
-      targetPort: http
-YAML
+  kubectl apply -f "${FIXTURES_DIR}/telemetry-sink.yaml"
+  kubectl apply -f "${FIXTURES_DIR}/sample-http.yaml"
   kubectl rollout status deployment/telemetry-sink --timeout=180s
   kubectl rollout status deployment/sample-http --timeout=180s
 }
 
 start_http_traffic() {
   kubectl delete pod traffic --ignore-not-found --grace-period=1 >/dev/null
-  # Keep traffic flowing while OBI discovers and instruments the workload. A short
-  # burst can finish before the asynchronous process-discovery poll completes.
-  # shellcheck disable=SC2016 # Expansion belongs to the pod shell.
-  kubectl run traffic --image=curlimages/curl:8.17.0 --restart=Never --command -- \
-    sh -c 'while true; do curl -fsS http://sample-http/ >/dev/null; sleep 0.1; done'
+  kubectl apply -f "${FIXTURES_DIR}/traffic.yaml"
   kubectl wait --for=condition=Ready pod/traffic --timeout=120s
 }
 
 exercise_obi_daemonset() {
   # Use OTLP/HTTP so this gate exercises the complete signal-specific /v1 paths.
-  kubectl obi attach --endpoint=http://telemetry-sink.default.svc.cluster.local:4318
+  zeroins obi attach --endpoint=http://telemetry-sink.default.svc.cluster.local:4318
   start_http_traffic
   if ! wait_for_log 'ResourceSpans|ResourceMetrics|ScopeSpans|ScopeMetrics' 180; then
     kubectl logs --namespace obi-system --selector app.kubernetes.io/instance=obi \
@@ -211,24 +95,62 @@ exercise_obi_daemonset() {
     fail 'OBI did not export traces or metrics to the sink'
   fi
   kubectl delete pod traffic --wait=true --grace-period=1
-  kubectl obi status
-  kubectl obi detach
+  zeroins obi status
+  zeroins obi detach
   if helm status obi --namespace obi-system >/dev/null 2>&1; then
     fail 'OBI Helm release still exists after detach'
   fi
 }
 
+exercise_obi_daemonset_duration() {
+  # Run the bounded attach in the background so traffic can flow while the
+  # observer is active. The attach blocks for 90s, then auto-detaches.
+  zeroins obi attach --duration=90s \
+    --endpoint=http://telemetry-sink.default.svc.cluster.local:4318 &
+  local attach_pid=$!
+
+  # Wait for the DaemonSet to become ready before generating traffic.
+  local ds_ready=0
+  for _ in {1..24}; do
+    if kubectl get daemonset -l app.kubernetes.io/instance=obi -n obi-system -o jsonpath='{.items[0].status.numberReady}' 2>/dev/null | grep -E '^[1-9]' >/dev/null; then
+      ds_ready=1
+      break
+    fi
+    sleep 5
+  done
+  [[ ${ds_ready} -eq 1 ]] || fail 'OBI DaemonSet did not become ready during bounded attach'
+
+  start_http_traffic
+  if ! wait_for_log 'ResourceSpans|ResourceMetrics|ScopeSpans|ScopeMetrics' 180; then
+    fail 'OBI did not export telemetry during bounded attach'
+  fi
+  kubectl delete pod traffic --wait=true --grace-period=1
+
+  # Wait for the duration timer to fire and auto-detach.
+  local elapsed=0
+  while ((elapsed < 150)); do
+    if ! helm status obi --namespace obi-system >/dev/null 2>&1; then
+      printf 'Bounded attach auto-detached after %ds.\n' "${elapsed}"
+      wait ${attach_pid} 2>/dev/null || true
+      return 0
+    fi
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+  fail 'OBI Helm release still exists after --duration=90s expiry'
+}
+
 exercise_obi_sidecar() {
-  kubectl obi attach sample-http --mode=sidecar \
+  zeroins obi attach sample-http --mode=sidecar \
     --endpoint=http://telemetry-sink.default.svc.cluster.local:4318
-  kubectl obi attach sample-http --mode=sidecar \
+  zeroins obi attach sample-http --mode=sidecar \
     --endpoint=http://telemetry-sink.default.svc.cluster.local:4318
 
   local obi_count
   obi_count=$(kubectl get deployment sample-http -o jsonpath='{range .spec.template.spec.containers[*]}{.name}{"\n"}{end}' | grep -c '^obi$')
   [[ ${obi_count} -eq 1 ]] || fail "sidecar attach created ${obi_count} obi containers"
 
-  kubectl obi detach sample-http --mode=sidecar
+  zeroins obi detach sample-http --mode=sidecar
   if kubectl get deployment sample-http -o jsonpath='{range .spec.template.spec.containers[*]}{.name}{"\n"}{end}' | grep '^obi$' >/dev/null; then
     fail 'sidecar detach left the obi container behind'
   fi
@@ -240,7 +162,7 @@ exercise_obi_sidecar() {
 exercise_profiler() {
   local profile_start
   profile_start=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  if ! kubectl profiler attach \
+  if ! zeroins profiler attach \
     --endpoint=telemetry-sink.default.svc.cluster.local:4317 \
     --insecure; then
     kubectl get pods --namespace profiler-system -o wide >&2 || true
@@ -249,19 +171,51 @@ exercise_profiler() {
       --all-containers --prefix --tail=-1 >&2 || true
     fail 'profiling Collector did not become ready'
   fi
-  kubectl profiler status
+  zeroins profiler status
 
   kubectl delete pod cpu-burn --ignore-not-found >/dev/null
-  # shellcheck disable=SC2016 # Expansion belongs to the pod shell.
-  kubectl run cpu-burn --image=busybox:1.37 --restart=Never --command -- \
-    sh -c 'i=0; while [ "$i" -lt 10000000 ]; do i=$((i+1)); done'
+  kubectl apply -f "${FIXTURES_DIR}/cpu-burn.yaml"
   kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/cpu-burn --timeout=180s
   wait_for_log 'ResourceProfiles|ScopeProfiles' 240 "${profile_start}" ||
     fail 'profiler did not export a profile batch to the sink'
 
-  kubectl profiler detach
+  zeroins profiler detach
   if helm status profiler --namespace profiler-system >/dev/null 2>&1; then
     fail 'profiler Helm release still exists after detach'
+  fi
+}
+
+exercise_sessions_reap() {
+  # Create a deliberately orphaned expired session by attaching with a short
+  # duration and then killing the process with SIGKILL before the timer fires.
+  zeroins obi attach --duration=30s \
+    --endpoint=http://telemetry-sink.default.svc.cluster.local:4318 &
+  local attach_pid=$!
+
+  # Wait until the managed session label and expiry annotation exist on the
+  # DaemonSet, so the orphan is discoverable by sessions reap.
+  local session_ready=0
+  for _ in {1..24}; do
+    if kubectl get daemonset -l zeroins.kakkoyun.dev/managed=true -n obi-system -o jsonpath='{.items[0].metadata.annotations.zeroins\.kakkoyun\.dev/expires-at}' 2>/dev/null | grep -E . >/dev/null; then
+      session_ready=1
+      break
+    fi
+    sleep 2
+  done
+  [[ ${session_ready} -eq 1 ]] || fail 'could not create orphaned session: managed label or expires-at annotation never appeared'
+
+  # SIGKILL the attach process so the bounded cleanup handler cannot run
+  # and the session is truly orphaned.
+  kill -9 "${attach_pid}" 2>/dev/null || true
+  wait "${attach_pid}" 2>/dev/null || true
+
+  # Wait for the expiry to pass.
+  sleep 35
+
+  # Reap should find and detach the expired orphaned session.
+  zeroins sessions reap -A
+  if helm status obi --namespace obi-system >/dev/null 2>&1; then
+    fail 'sessions reap did not detach the orphaned expired OBI release'
   fi
 }
 
@@ -270,6 +224,7 @@ main() {
 
   temporary_directory=$(mktemp -d)
   trap cleanup EXIT
+  go build -o "${temporary_directory}/bin/zeroins" ./cmd/zeroins
   go build -o "${temporary_directory}/bin/kubectl-obi" ./cmd/kubectl-obi
   go build -o "${temporary_directory}/bin/kubectl-profiler" ./cmd/kubectl-profiler
   export PATH="${temporary_directory}/bin:${PATH}"
@@ -279,6 +234,8 @@ main() {
   exercise_obi_daemonset
   exercise_obi_sidecar
   exercise_profiler
+  exercise_obi_daemonset_duration
+  exercise_sessions_reap
 
   printf 'Live OBI and profiler integration gate passed on %s with %s.\n' "$(uname -r)" "${PROFILER_IMAGE}"
 }

@@ -9,13 +9,15 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 )
 
 type runnerCall struct {
-	name string
-	args []string
+	name   string
+	args   []string
+	output bool // true if called via Output, false if via Run
 }
 
 type runnerResponse struct {
@@ -30,7 +32,16 @@ type fakeRunner struct {
 }
 
 func (runner *fakeRunner) Run(_ context.Context, name string, args ...string) (string, error) {
-	runner.calls = append(runner.calls, runnerCall{name: name, args: append([]string(nil), args...)})
+	runner.calls = append(runner.calls, runnerCall{name: name, args: append([]string(nil), args...), output: false})
+	return runner.respond(name, args)
+}
+
+func (runner *fakeRunner) Output(_ context.Context, name string, args ...string) (string, error) {
+	runner.calls = append(runner.calls, runnerCall{name: name, args: append([]string(nil), args...), output: true})
+	return runner.respond(name, args)
+}
+
+func (runner *fakeRunner) respond(name string, args []string) (string, error) {
 	if runner.inspect != nil {
 		if err := runner.inspect(name, args); err != nil {
 			return "", err
@@ -165,17 +176,17 @@ func TestAttachDaemonSetCommand(t *testing.T) {
 			return nil
 		},
 	}
-	deps, stdout, stderr := testDeps(runner)
+	deps, _, stderr := testDeps(runner)
 	deps.TempDir = t.TempDir()
 	code := Main(context.Background(), []string{"attach", "--endpoint", "https://collector:4318"}, deps)
 	if code != 0 {
 		t.Fatalf("Main() = %d\nstderr: %s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "chart 0.10.0") {
-		t.Fatalf("stdout missing chart pin: %s", stdout.String())
+	if !strings.Contains(stderr.String(), "chart 0.10.0") {
+		t.Fatalf("stderr missing chart pin: %s", stderr.String())
 	}
-	if len(runner.calls) != 5 {
-		t.Fatalf("calls = %d, want 5: %#v", len(runner.calls), runner.calls)
+	if len(runner.calls) != 7 {
+		t.Fatalf("calls = %d, want 7: %#v", len(runner.calls), runner.calls)
 	}
 	install := runner.calls[2]
 	joined := strings.Join(install.args, " ")
@@ -253,8 +264,8 @@ func TestAttachSidecarRecordsStateAndIsIdempotent(t *testing.T) {
 	if err := attachSidecar(context.Background(), deps, "web", "prod", "https://collector:4318"); err != nil {
 		t.Fatalf("attachSidecar() error = %v", err)
 	}
-	if len(runner.calls) != 4 {
-		t.Fatalf("calls = %d, want 4", len(runner.calls))
+	if len(runner.calls) != 6 {
+		t.Fatalf("calls = %d, want 6", len(runner.calls))
 	}
 	patch := runner.calls[1].args[len(runner.calls[1].args)-1]
 	for _, want := range []string{managedAnnotation, originalShareAnnotation, `"false"`, obiImage, "OTEL_EBPF_AUTO_TARGET_EXE", "OTEL_EXPORTER_OTLP_ENDPOINT"} {
@@ -264,17 +275,17 @@ func TestAttachSidecarRecordsStateAndIsIdempotent(t *testing.T) {
 	}
 
 	idempotentRunner := &fakeRunner{responses: []runnerResponse{{output: deploymentJSON(true, &falseValue, true, "false")}}}
-	idempotentDeps, stdout, _ := testDeps(idempotentRunner)
+	idempotentDeps, _, idempotentStderr := testDeps(idempotentRunner)
 	if err := attachSidecar(context.Background(), idempotentDeps, "web", "prod", "https://collector:4318"); err != nil {
 		t.Fatalf("idempotent attach error = %v", err)
 	}
-	if len(idempotentRunner.calls) != 1 || !strings.Contains(stdout.String(), "already has") {
-		t.Fatalf("idempotent attach made unexpected calls: %#v; stdout=%s", idempotentRunner.calls, stdout.String())
+	if len(idempotentRunner.calls) != 1 || !strings.Contains(idempotentStderr.String(), "already has") {
+		t.Fatalf("idempotent attach made unexpected calls: %#v; stderr=%s", idempotentRunner.calls, idempotentStderr.String())
 	}
 }
 
 func TestAttachSidecarUsesCurrentNamespace(t *testing.T) {
-	runner := &fakeRunner{responses: []runnerResponse{{output: "team-a"}, {output: deploymentJSON(false, nil, false, "")}, {}, {}, {}}}
+	runner := &fakeRunner{responses: []runnerResponse{{output: "team-a"}, {output: deploymentJSON(false, nil, false, "")}, {}, {}, {}, {}, {}}}
 	deps, _, stderr := testDeps(runner)
 	code := Main(context.Background(), []string{"attach", "web", "--mode", "sidecar", "--endpoint", "http://collector:4318"}, deps)
 	if code != 0 {
@@ -298,7 +309,7 @@ func TestDetachSidecarRestoresOriginalShareState(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			runner := &fakeRunner{responses: []runnerResponse{{output: deploymentJSON(true, test.share, true, test.original)}, {}, {}, {}}}
+			runner := &fakeRunner{responses: []runnerResponse{{output: deploymentJSON(true, test.share, true, test.original)}, {}, {}, {}, {}}}
 			deps, _, _ := testDeps(runner)
 			if err := detachSidecar(context.Background(), deps, "web", "prod"); err != nil {
 				t.Fatalf("detachSidecar() error = %v", err)
@@ -346,4 +357,96 @@ func TestRunnerErrorContext(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "cluster unreachable") {
 		t.Fatalf("detachDaemonSet() error = %v", err)
 	}
+}
+
+func TestAttachProducesIdenticalArgvUnderBothNames(t *testing.T) {
+	// zeroins obi attach and kubectl-obi attach should produce identical runner argv.
+	// The Use string only affects the cobra command name, not the runner calls.
+	args := []string{"attach", "--endpoint", "https://collector:4318"}
+
+	runner1 := &fakeRunner{responses: []runnerResponse{{}, {}, {output: "installed\n"}, {output: "obi-agent"}, {output: "ready\n"}, {}, {}}}
+	deps1, _, _ := testDeps(runner1)
+	deps1.TempDir = t.TempDir()
+	cmd1 := NewCommand(deps1, "kubectl-obi")
+	cmd1.SetArgs(args)
+	if err := cmd1.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("kubectl-obi attach: %v", err)
+	}
+
+	runner2 := &fakeRunner{responses: []runnerResponse{{}, {}, {output: "installed\n"}, {output: "obi-agent"}, {output: "ready\n"}, {}, {}}}
+	deps2, _, _ := testDeps(runner2)
+	deps2.TempDir = t.TempDir()
+	cmd2 := NewCommand(deps2, "obi")
+	cmd2.SetArgs(args)
+	if err := cmd2.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("zeroins obi attach: %v", err)
+	}
+
+	if len(runner1.calls) != len(runner2.calls) {
+		t.Fatalf("call count mismatch: kubectl-obi=%d, obi=%d", len(runner1.calls), len(runner2.calls))
+	}
+	for i, c := range runner1.calls {
+		if c.name != runner2.calls[i].name {
+			t.Errorf("call %d name: kubectl-obi=%q, obi=%q", i, c.name, runner2.calls[i].name)
+		}
+		// Normalize temp file paths and sort args for comparison (map ordering is random)
+		norm1 := normalizeArgs(c.args)
+		norm2 := normalizeArgs(runner2.calls[i].args)
+		if strings.Join(norm1, " ") != strings.Join(norm2, " ") {
+			t.Errorf("call %d normalized args differ:\nkubectl-obi=%q\nobi=%q", i, strings.Join(norm1, " "), strings.Join(norm2, " "))
+		}
+	}
+}
+
+func normalizeArgs(args []string) []string {
+	normalized := make([]string, len(args))
+	for i, a := range args {
+		// Replace temp file paths
+		if strings.Contains(a, "zeroins-obi-values-") {
+			a = "<temp-file>"
+		}
+		// Replace session IDs
+		if strings.HasPrefix(a, "zeroins.kakkoyun.dev/session-id=") {
+			a = "zeroins.kakkoyun.dev/session-id=<auto>"
+		}
+		normalized[i] = a
+	}
+	// Sort to handle map iteration ordering (annotate calls)
+	sort.Strings(normalized)
+	return normalized
+}
+
+func TestDryRunDaemonSetZeroMutatingCalls(t *testing.T) {
+	runner := &fakeRunner{responses: []runnerResponse{{output: "test-context"}}}
+	deps, stdout, _ := testDeps(runner)
+	cmd := NewCommand(deps, "obi")
+	cmd.SetArgs([]string{"attach", "--dry-run", "--endpoint", "https://collector:4318"})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("dry-run: %v", err)
+	}
+	for _, c := range runner.calls {
+		if c.name == "helm" && containsAny(c.args, "upgrade", "install", "uninstall") {
+			t.Errorf("dry-run made helm mutating call: %s", strings.Join(c.args, " "))
+		}
+		if c.name == "kubectl" && containsAny(c.args, "patch", "label", "annotate", "apply", "delete") {
+			t.Errorf("dry-run made kubectl mutating call: %s", strings.Join(c.args, " "))
+		}
+	}
+	if !strings.Contains(stdout.String(), "Plan") || !strings.Contains(stdout.String(), "daemonset") {
+		t.Fatalf("dry-run output missing plan: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "tracefs") {
+		t.Errorf("dry-run output missing privilege: %s", stdout.String())
+	}
+}
+
+func containsAny(args []string, words ...string) bool {
+	for _, a := range args {
+		for _, w := range words {
+			if a == w {
+				return true
+			}
+		}
+	}
+	return false
 }
