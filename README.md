@@ -36,7 +36,7 @@ go run github.com/kakkoyun/zeroins/cmd/zeroins@latest obi lookup net/http
 go run github.com/kakkoyun/zeroins/cmd/zeroins@latest version
 ```
 
-## Install the Agent Skills
+## Available Skills
 
 The repository follows the Agent Skills directory convention:
 
@@ -44,9 +44,20 @@ The repository follows the Agent Skills directory convention:
 npx skills add kakkoyun/zeroins --all
 ```
 
-The `collect-go-telemetry` skill helps an agent choose between OBI, otelc, and
-the eBPF Profiler. It requires explicit confirmation before cluster mutations.
-The `profile-go-with-perfgo` skill covers the perfgo profiling tool.
+| Skill | Path | Description |
+| --- | --- | --- |
+| `collect-go-telemetry` | `skills/collect-go-telemetry/` | Choose and operate zero-code Go telemetry tools through the unified zeroins command. Requires explicit confirmation before cluster mutations. |
+| `profile-go-with-perfgo` | `skills/profile-go-with-perfgo/` | Profile Go code with perfgo for microarchitectural analysis. Covers test and attach modes, PMU events, and the investigation loop. |
+
+## Repository Structure
+
+```
+skills/
+  collect-go-telemetry/
+    SKILL.md
+  profile-go-with-perfgo/
+    SKILL.md
+```
 
 ## Typical workflow
 

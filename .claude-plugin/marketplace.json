@@ -1,0 +1,22 @@
+{
+  "name": "zeroins",
+  "owner": {
+    "name": "kakkoyun"
+  },
+  "metadata": {
+    "description": "Zero-code Go telemetry skills: OBI, otelc, eBPF Profiler, and perfgo",
+    "version": "0.2.0"
+  },
+  "plugins": [
+    {
+      "name": "collect-go-telemetry",
+      "source": "./skills/collect-go-telemetry",
+      "description": "Choose and operate zero-code Go telemetry tools through the unified zeroins command. Compares OBI runtime instrumentation, otelc compile-time instrumentation, and the OpenTelemetry eBPF Profiler. Requires explicit confirmation before cluster mutations."
+    },
+    {
+      "name": "profile-go-with-perfgo",
+      "source": "./skills/profile-go-with-perfgo",
+      "description": "Profile Go code with perfgo, a third-party Apache-2.0 tool for microarchitectural analysis. Covers test and attach modes, stat/profile/cache-to-cache collection, PMU event specification, and the numbered investigation loop."
+    }
+  ]
+}
