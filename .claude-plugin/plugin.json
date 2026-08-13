@@ -1,0 +1,20 @@
+{
+  "name": "zeroins",
+  "description": "Zero-code Go telemetry skills: OBI, otelc, eBPF Profiler, and perfgo",
+  "version": "0.2.0",
+  "author": {
+    "name": "kakkoyun"
+  },
+  "homepage": "https://github.com/kakkoyun/zeroins",
+  "repository": "https://github.com/kakkoyun/zeroins",
+  "keywords": [
+    "go",
+    "observability",
+    "opentelemetry",
+    "ebpf",
+    "obi",
+    "otelc",
+    "profiling",
+    "skills"
+  ]
+}
