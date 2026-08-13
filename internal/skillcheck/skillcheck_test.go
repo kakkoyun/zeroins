@@ -458,3 +458,247 @@ func TestLineCount(t *testing.T) {
 		})
 	}
 }
+
+// writeGate writes a canonical confirmation-gate.md in the given skill dir.
+func writeGate(t *testing.T, dir, skillName string) {
+	t.Helper()
+	refDir := filepath.Join(dir, "skills", skillName, "references")
+	if err := os.MkdirAll(refDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gate := "# Confirmation gate\n\nObtain explicit user confirmation.\n"
+	if err := os.WriteFile(filepath.Join(refDir, "confirmation-gate.md"), []byte(gate), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// gateSkill is a SKILL.md that links to the confirmation gate before the
+// first attach fence.
+const gateSkill = `---
+name: %s
+description: A gate-bearing skill.
+license: MIT
+---
+
+# %s
+
+Do not run attach or detach until the checklist in [confirmation gate](references/confirmation-gate.md) is complete.
+
+## Attach
+
+` + "```" + `bash
+zeroins obi attach --dry-run
+` + "```" + `
+`
+
+func TestDivergedGateCopy(t *testing.T) {
+	dir := t.TempDir()
+	// Create two gate-bearing skills with divergent gate copies.
+	for _, name := range []string{"collect-go-telemetry", "zeroins-obi-attach"} {
+		skillDir := filepath.Join(dir, "skills", name, "references")
+		if err := os.MkdirAll(skillDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "skills", name, "SKILL.md"),
+			[]byte(fmt.Sprintf(gateSkill, name, name)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Canonical copy (correct).
+	writeGate(t, dir, "collect-go-telemetry")
+	// Divergent copy.
+	refDir := filepath.Join(dir, "skills", "zeroins-obi-attach", "references")
+	if err := os.WriteFile(filepath.Join(refDir, "confirmation-gate.md"),
+		[]byte("# Different gate\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Marketplace and README for two skills.
+	if err := os.MkdirAll(filepath.Join(dir, ".claude-plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".claude-plugin", "marketplace.json"),
+		[]byte(validMarketplace("collect-go-telemetry", "zeroins-obi-attach")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"),
+		[]byte(validReadme("collect-go-telemetry", "zeroins-obi-attach")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fails := runCheck(t, dir)
+	if !hasCheck(fails, "F") {
+		t.Fatalf("expected check F failure for diverged gate, got: %v", fails)
+	}
+}
+
+func TestGateLinkAfterAttachFence(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"collect-go-telemetry", "zeroins-obi-attach"} {
+		skillDir := filepath.Join(dir, "skills", name, "references")
+		if err := os.MkdirAll(skillDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// SKILL.md with the gate link AFTER the first attach fence.
+	badSkill := `---
+name: collect-go-telemetry
+description: A gate-bearing skill.
+license: MIT
+---
+
+# collect-go-telemetry
+
+## Attach
+
+` + "```" + `bash
+zeroins obi attach --dry-run
+` + "```" + `
+
+Do not run attach until the [confirmation gate](references/confirmation-gate.md) is complete.
+`
+	if err := os.WriteFile(filepath.Join(dir, "skills", "collect-go-telemetry", "SKILL.md"),
+		[]byte(badSkill), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Second skill is fine.
+	if err := os.WriteFile(filepath.Join(dir, "skills", "zeroins-obi-attach", "SKILL.md"),
+		[]byte(fmt.Sprintf(gateSkill, "zeroins-obi-attach", "zeroins-obi-attach")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeGate(t, dir, "collect-go-telemetry")
+	writeGate(t, dir, "zeroins-obi-attach")
+	if err := os.MkdirAll(filepath.Join(dir, ".claude-plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".claude-plugin", "marketplace.json"),
+		[]byte(validMarketplace("collect-go-telemetry", "zeroins-obi-attach")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"),
+		[]byte(validReadme("collect-go-telemetry", "zeroins-obi-attach")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fails := runCheck(t, dir)
+	if !hasCheck(fails, "F") {
+		t.Fatalf("expected check F failure for gate link after attach fence, got: %v", fails)
+	}
+}
+
+func TestNonGateBearingSkillHasGate(t *testing.T) {
+	dir := t.TempDir()
+	// Create a non-gate-bearing skill with a confirmation-gate.md.
+	writeValidTree(t, dir, "alpha-skill")
+	refDir := filepath.Join(dir, "skills", "alpha-skill", "references")
+	if err := os.MkdirAll(refDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(refDir, "confirmation-gate.md"),
+		[]byte("# gate\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fails := runCheck(t, dir)
+	if !hasCheck(fails, "F") {
+		t.Fatalf("expected check F failure for non-gate-bearing skill with gate, got: %v", fails)
+	}
+}
+
+func TestPinDisagreesWithReadme(t *testing.T) {
+	dir := t.TempDir()
+	writeValidTree(t, dir, "alpha-skill")
+	// Add a README with a Version pins table.
+	readmePath := filepath.Join(dir, "README.md")
+	readme := `# test
+
+## Available Skills
+
+| Skill | Path | Description |
+| --- | --- | --- |
+| ` + "`alpha-skill`" + ` | ` + "`skills/alpha-skill/`" + ` | A valid skill. |
+
+## Repository Structure
+
+` + "```" + `
+skills/
+  alpha-skill/
+    SKILL.md
+` + "```" + `
+
+## Version pins
+
+| Contract | Pin |
+| --- | --- |
+| Test chart | 0.166.0 |
+`
+	if err := os.WriteFile(readmePath, []byte(readme), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Overwrite SKILL.md with a mismatched pin.
+	skillPath := filepath.Join(dir, "skills", "alpha-skill", "SKILL.md")
+	bad := `---
+name: alpha-skill
+description: A valid skill.
+license: MIT
+---
+
+# alpha-skill
+
+Uses chart 0.165.0 which is wrong.
+`
+	if err := os.WriteFile(skillPath, []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fails := runCheck(t, dir)
+	if !hasCheck(fails, "G") {
+		t.Fatalf("expected check G failure for pin disagreeing with README, got: %v", fails)
+	}
+}
+
+func TestPinAgreesWithReadme(t *testing.T) {
+	dir := t.TempDir()
+	writeValidTree(t, dir, "alpha-skill")
+	readmePath := filepath.Join(dir, "README.md")
+	readme := `# test
+
+## Available Skills
+
+| Skill | Path | Description |
+| --- | --- | --- |
+| ` + "`alpha-skill`" + ` | ` + "`skills/alpha-skill/`" + ` | A valid skill. |
+
+## Repository Structure
+
+` + "```" + `
+skills/
+  alpha-skill/
+    SKILL.md
+` + "```" + `
+
+## Version pins
+
+| Contract | Pin |
+| --- | --- |
+| Test chart | 0.166.0 |
+`
+	if err := os.WriteFile(readmePath, []byte(readme), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skillPath := filepath.Join(dir, "skills", "alpha-skill", "SKILL.md")
+	good := `---
+name: alpha-skill
+description: A valid skill.
+license: MIT
+---
+
+# alpha-skill
+
+Uses chart 0.166.0 which is correct.
+`
+	if err := os.WriteFile(skillPath, []byte(good), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fails := runCheck(t, dir)
+	if hasCheck(fails, "G") {
+		t.Fatalf("expected no check G failure for pin agreeing with README, got: %v", fails)
+	}
+}
