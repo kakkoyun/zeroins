@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kakkoyun/zeroins/internal/execx"
+	"github.com/kakkoyun/zeroins/internal/output"
 	"github.com/kakkoyun/zeroins/internal/version"
 	"github.com/spf13/cobra"
 )
@@ -68,7 +69,7 @@ func (deps Dependencies) normalized() Dependencies {
 // Main executes kubectl-obi and returns its process exit code.
 func Main(ctx context.Context, args []string, deps Dependencies) int {
 	deps = deps.normalized()
-	cmd := NewCommand(deps)
+	cmd := NewCommand(deps, "kubectl-obi")
 	cmd.SetArgs(args)
 	if err := cmd.ExecuteContext(ctx); err != nil {
 		fmt.Fprintf(deps.Stderr, "error: %v\n", err)
@@ -77,23 +78,27 @@ func Main(ctx context.Context, args []string, deps Dependencies) int {
 	return 0
 }
 
-// NewCommand constructs the kubectl-obi command tree.
-func NewCommand(deps Dependencies) *cobra.Command {
+// NewCommand constructs the OBI command tree. The use string sets the root
+// command name so the same subtree mounts correctly as "kubectl-obi" or as
+// "obi" under the unified zeroins root.
+func NewCommand(deps Dependencies, use string) *cobra.Command {
 	deps = deps.normalized()
 	root := &cobra.Command{
-		Use:           "kubectl-obi",
+		Use:           use,
 		Short:         "Manage OBI in a Kubernetes cluster (experimental)",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
 	root.SetOut(deps.Stdout)
 	root.SetErr(deps.Stderr)
-	root.AddCommand(newAttachCommand(deps), newStatusCommand(deps), newTracesCommand(deps), newDetachCommand(deps), newVersionCommand(deps))
+	root.AddCommand(newLookupCommand(deps), newAttachCommand(deps), newStatusCommand(deps), newTracesCommand(deps), newValuesCommand(deps), newDetachCommand(deps), newVersionCommand(deps, use))
 	return root
 }
 
 func newAttachCommand(deps Dependencies) *cobra.Command {
-	var namespace, mode, endpoint string
+	var namespace, mode, endpoint, outputFormat string
+	var dryRun bool
+	var duration time.Duration
 	cmd := &cobra.Command{
 		Use:   "attach [deployment]",
 		Short: "Attach OBI as a DaemonSet or sidecar (experimental)",
@@ -109,6 +114,12 @@ func newAttachCommand(deps Dependencies) *cobra.Command {
 				if namespace == "" {
 					namespace = defaultNS
 				}
+				if dryRun {
+					return printDaemonSetPlan(deps, namespace, endpoint, outputFormat)
+				}
+				if duration > 0 {
+					return attachDaemonSetBounded(cmd.Context(), deps, namespace, endpoint, duration)
+				}
 				return attachDaemonSet(cmd.Context(), deps, namespace, endpoint)
 			case "sidecar":
 				if len(args) != 1 {
@@ -121,6 +132,12 @@ func newAttachCommand(deps Dependencies) *cobra.Command {
 						return err
 					}
 				}
+				if dryRun {
+					return printSidecarPlan(deps, args[0], namespace, endpoint, outputFormat)
+				}
+				if duration > 0 {
+					return attachSidecarBounded(cmd.Context(), deps, args[0], namespace, endpoint, duration)
+				}
 				return attachSidecar(cmd.Context(), deps, args[0], namespace, endpoint)
 			default:
 				return fmt.Errorf("unknown mode %q; choose daemonset or sidecar", mode)
@@ -130,6 +147,9 @@ func newAttachCommand(deps Dependencies) *cobra.Command {
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", "", "Namespace (daemonset default: obi-system; sidecar default: current context)")
 	cmd.Flags().StringVar(&mode, "mode", "daemonset", "Deployment mode: daemonset or sidecar")
 	cmd.Flags().StringVar(&endpoint, "endpoint", "", "Required OTLP HTTP(S) base endpoint")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the plan without mutating")
+	cmd.Flags().DurationVar(&duration, "duration", 0, "Attach for this duration, then detach automatically")
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "table", "Output format for --dry-run: table or json")
 	_ = cmd.MarkFlagRequired("endpoint")
 	return cmd
 }
@@ -183,6 +203,10 @@ func daemonSetValues(endpoint string) ([]byte, error) {
 }
 
 func attachDaemonSet(ctx context.Context, deps Dependencies, namespace, endpoint string) error {
+	return attachDaemonSetWithMeta(ctx, deps, namespace, endpoint, newSessionMeta(endpoint, "daemonset", 0))
+}
+
+func attachDaemonSetWithMeta(ctx context.Context, deps Dependencies, namespace, endpoint string, meta sessionMeta) error {
 	values, err := daemonSetValues(endpoint)
 	if err != nil {
 		return fmt.Errorf("attach daemonset: build Helm values: %w", err)
@@ -205,7 +229,7 @@ func attachDaemonSet(ctx context.Context, deps Dependencies, namespace, endpoint
 		return fmt.Errorf("attach daemonset: close temporary values file: %w", err)
 	}
 
-	fmt.Fprintf(deps.Stdout, "Deploying OBI %s into namespace %q via Helm chart %s...\n", OBIVersion, namespace, ChartVersion)
+	fmt.Fprintf(deps.Stderr, "Deploying OBI %s into namespace %q via Helm chart %s...\n", OBIVersion, namespace, ChartVersion)
 	if _, err := deps.Runner.Run(ctx, "helm", "repo", "add", "open-telemetry", helmRepoURL); err != nil && !strings.Contains(err.Error(), "already exists") {
 		return fmt.Errorf("attach daemonset: add Helm repository: %w", err)
 	}
@@ -219,9 +243,9 @@ func attachDaemonSet(ctx context.Context, deps Dependencies, namespace, endpoint
 	if err != nil {
 		return fmt.Errorf("attach daemonset: install Helm chart: %w", err)
 	}
-	fmt.Fprint(deps.Stdout, out)
+	fmt.Fprint(deps.Stderr, out)
 
-	dsName, err := deps.Runner.Run(ctx, "kubectl", "get", "daemonset", "-l", "app.kubernetes.io/instance=obi", "-n", namespace, "-o", "jsonpath={.items[0].metadata.name}")
+	dsName, err := deps.Runner.Output(ctx, "kubectl", "get", "daemonset", "-l", "app.kubernetes.io/instance=obi", "-n", namespace, "-o", "jsonpath={.items[0].metadata.name}")
 	if err != nil {
 		return fmt.Errorf("attach daemonset: find DaemonSet: %w", err)
 	}
@@ -232,30 +256,62 @@ func attachDaemonSet(ctx context.Context, deps Dependencies, namespace, endpoint
 	if err != nil {
 		return fmt.Errorf("attach daemonset: wait for rollout: %w", err)
 	}
-	fmt.Fprint(deps.Stdout, out)
+	fmt.Fprint(deps.Stderr, out)
+
+	if err := labelAndAnnotateDaemonSet(ctx, deps, strings.TrimSpace(dsName), namespace, meta); err != nil {
+		return fmt.Errorf("attach daemonset: %w", err)
+	}
+	fmt.Fprintf(deps.Stderr, "Session %s recorded on daemonset/%s in %s.\n", meta.ID, strings.TrimSpace(dsName), namespace)
 	return nil
+}
+
+func attachDaemonSetBounded(ctx context.Context, deps Dependencies, namespace, endpoint string, duration time.Duration) error {
+	meta := newSessionMeta(endpoint, "daemonset", duration)
+	if err := attachDaemonSetWithMeta(ctx, deps, namespace, endpoint, meta); err != nil {
+		return err
+	}
+	return runBoundedAttach(ctx, deps, duration, func(c context.Context) error {
+		return detachDaemonSet(c, deps, namespace)
+	}, fmt.Sprintf("Helm release obi in namespace %s", namespace))
 }
 
 func newStatusCommand(deps Dependencies) *cobra.Command {
 	var namespace string
 	var allNamespaces bool
+	var outputFormat string
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show OBI DaemonSet and pod status",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return showStatus(cmd.Context(), deps, namespace, allNamespaces)
+			format, err := output.ParseSimple(outputFormat)
+			if err != nil {
+				return err
+			}
+			return showStatus(cmd.Context(), deps, namespace, allNamespaces, string(format))
 		},
 	}
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", defaultNS, "Namespace to check")
 	cmd.Flags().BoolVarP(&allNamespaces, "all-namespaces", "A", false, "Check all namespaces")
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "table", "Output format: table or json")
 	return cmd
 }
 
-func showStatus(ctx context.Context, deps Dependencies, namespace string, allNamespaces bool) error {
+func showStatus(ctx context.Context, deps Dependencies, namespace string, allNamespaces bool, format string) error {
 	namespaceArgs := []string{"-n", namespace}
 	if allNamespaces {
 		namespaceArgs = []string{"--all-namespaces"}
+	}
+	if format == "json" {
+		args := []string{"get", "daemonset,pods", "-l", "app.kubernetes.io/instance=obi"}
+		args = append(args, namespaceArgs...)
+		args = append(args, "-o", "json")
+		out, err := deps.Runner.Output(ctx, "kubectl", args...)
+		if err != nil {
+			return fmt.Errorf("status: get resources: %w", err)
+		}
+		fmt.Fprintln(deps.Stdout, out)
+		return nil
 	}
 	fmt.Fprintln(deps.Stdout, "OBI Status\n----------")
 	for _, resource := range []string{"daemonset", "pods"} {
@@ -271,7 +327,8 @@ func showStatus(ctx context.Context, deps Dependencies, namespace string, allNam
 }
 
 func newDetachCommand(deps Dependencies) *cobra.Command {
-	var namespace, mode string
+	var namespace, mode, outputFormat string
+	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "detach [deployment]",
 		Short: "Remove a zeroins-managed OBI deployment",
@@ -283,6 +340,9 @@ func newDetachCommand(deps Dependencies) *cobra.Command {
 				}
 				if namespace == "" {
 					namespace = defaultNS
+				}
+				if dryRun {
+					return printDaemonSetDetachPlan(deps, namespace, outputFormat)
 				}
 				return detachDaemonSet(cmd.Context(), deps, namespace)
 			case "sidecar":
@@ -296,6 +356,9 @@ func newDetachCommand(deps Dependencies) *cobra.Command {
 						return err
 					}
 				}
+				if dryRun {
+					return printSidecarDetachPlan(deps, args[0], namespace, outputFormat)
+				}
 				return detachSidecar(cmd.Context(), deps, args[0], namespace)
 			default:
 				return fmt.Errorf("unknown mode %q; choose daemonset or sidecar", mode)
@@ -304,6 +367,8 @@ func newDetachCommand(deps Dependencies) *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", "", "Namespace (daemonset default: obi-system; sidecar default: current context)")
 	cmd.Flags().StringVar(&mode, "mode", "daemonset", "Deployment mode: daemonset or sidecar")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the plan without mutating")
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "table", "Output format for --dry-run: table or json")
 	return cmd
 }
 
@@ -313,20 +378,20 @@ func detachDaemonSet(ctx context.Context, deps Dependencies, namespace string) e
 		return fmt.Errorf("detach daemonset: uninstall Helm release: %w", err)
 	}
 	if strings.TrimSpace(out) == "" {
-		fmt.Fprintln(deps.Stdout, "OBI release not found (already removed).")
+		fmt.Fprintln(deps.Stderr, "OBI release not found (already removed).")
 	} else {
-		fmt.Fprint(deps.Stdout, out)
+		fmt.Fprint(deps.Stderr, out)
 	}
 	return nil
 }
 
-func newVersionCommand(deps Dependencies) *cobra.Command {
+func newVersionCommand(deps Dependencies, use string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print zeroins, OBI, and chart versions",
 		Args:  cobra.NoArgs,
 		Run: func(_ *cobra.Command, _ []string) {
-			fmt.Fprintf(deps.Stdout, "kubectl-obi: %s\nOBI:         %s\nChart:       %s\n", version.Current(), OBIVersion, ChartVersion)
+			fmt.Fprintf(deps.Stdout, "%-12s %s\n%-12s %s\n%-12s %s\n", use+":", version.Current(), "OBI:", OBIVersion, "Chart:", ChartVersion)
 		},
 	}
 }

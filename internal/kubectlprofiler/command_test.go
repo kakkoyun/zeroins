@@ -12,8 +12,9 @@ import (
 )
 
 type call struct {
-	name string
-	args []string
+	name   string
+	args   []string
+	output bool
 }
 
 type response struct {
@@ -28,7 +29,16 @@ type fakeRunner struct {
 }
 
 func (runner *fakeRunner) Run(_ context.Context, name string, args ...string) (string, error) {
-	runner.calls = append(runner.calls, call{name: name, args: append([]string(nil), args...)})
+	runner.calls = append(runner.calls, call{name: name, args: append([]string(nil), args...), output: false})
+	return runner.respond(name, args)
+}
+
+func (runner *fakeRunner) Output(_ context.Context, name string, args ...string) (string, error) {
+	runner.calls = append(runner.calls, call{name: name, args: append([]string(nil), args...), output: true})
+	return runner.respond(name, args)
+}
+
+func (runner *fakeRunner) respond(name string, args []string) (string, error) {
 	if runner.inspect != nil {
 		if err := runner.inspect(name, args); err != nil {
 			return "", err
@@ -157,7 +167,7 @@ func TestAttachUsesSecureTemporaryValuesAndCleansUp(t *testing.T) {
 			return nil
 		},
 	}
-	deps, stdout, stderr := dependencies(runner, tempDir)
+	deps, _, stderr := dependencies(runner, tempDir)
 	code := Main(context.Background(), []string{"attach", "--endpoint", "profiles.example:4317"}, deps)
 	if code != 0 {
 		t.Fatalf("Main() = %d\nstderr: %s", code, stderr.String())
@@ -172,8 +182,8 @@ func TestAttachUsesSecureTemporaryValuesAndCleansUp(t *testing.T) {
 	if err != nil || len(files) != 0 {
 		t.Fatalf("temporary directory not empty: %v, %v", files, err)
 	}
-	if !strings.Contains(stdout.String(), "receiver v0.0.202632") {
-		t.Fatalf("stdout = %s", stdout.String())
+	if !strings.Contains(stderr.String(), "receiver v0.0.202632") {
+		t.Fatalf("stderr = %s", stderr.String())
 	}
 	install := strings.Join(runner.calls[2].args, " ")
 	if !strings.Contains(install, "--version 0.166.0") || !strings.Contains(install, "--namespace profiler-system") {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 const (
@@ -29,7 +30,7 @@ type deploymentDocument struct {
 }
 
 func readDeployment(ctx context.Context, deps Dependencies, deployment, namespace string) (deploymentDocument, error) {
-	out, err := deps.Runner.Run(ctx, "kubectl", "get", "deployment", deployment, "-n", namespace, "-o", "json")
+	out, err := deps.Runner.Output(ctx, "kubectl", "get", "deployment", deployment, "-n", namespace, "-o", "json")
 	if err != nil {
 		return deploymentDocument{}, fmt.Errorf("get deployment: %w", err)
 	}
@@ -64,6 +65,10 @@ func originalShareValue(value *bool) string {
 }
 
 func attachSidecar(ctx context.Context, deps Dependencies, deployment, namespace, endpoint string) error {
+	return attachSidecarWithMeta(ctx, deps, deployment, namespace, endpoint, newSessionMeta(endpoint, "sidecar", 0))
+}
+
+func attachSidecarWithMeta(ctx context.Context, deps Dependencies, deployment, namespace, endpoint string, meta sessionMeta) error {
 	document, err := readDeployment(ctx, deps, deployment, namespace)
 	if err != nil {
 		return fmt.Errorf("attach sidecar: %w", err)
@@ -72,18 +77,18 @@ func attachSidecar(ctx context.Context, deps Dependencies, deployment, namespace
 		if !document.managedByZeroins() {
 			return fmt.Errorf("attach sidecar: deployment already has an unmanaged container named obi")
 		}
-		fmt.Fprintf(deps.Stdout, "Deployment %q already has a zeroins-managed OBI sidecar.\n", deployment)
+		fmt.Fprintf(deps.Stderr, "Deployment %q already has a zeroins-managed OBI sidecar.\n", deployment)
 		return nil
 	}
+
+	annotations := sidecarAnnotations(meta)
+	annotations[originalShareAnnotation] = originalShareValue(document.Spec.Template.Spec.ShareProcessNamespace)
 
 	patch := map[string]any{
 		"spec": map[string]any{
 			"template": map[string]any{
 				"metadata": map[string]any{
-					"annotations": map[string]any{
-						managedAnnotation:       "true",
-						originalShareAnnotation: originalShareValue(document.Spec.Template.Spec.ShareProcessNamespace),
-					},
+					"annotations": annotations,
 				},
 				"spec": map[string]any{
 					"shareProcessNamespace": true,
@@ -109,8 +114,22 @@ func attachSidecar(ctx context.Context, deps Dependencies, deployment, namespace
 	if err != nil {
 		return fmt.Errorf("attach sidecar: patch deployment: %w", err)
 	}
-	fmt.Fprint(deps.Stdout, out)
-	return restartAndWait(ctx, deps, deployment, namespace, "attach sidecar")
+	fmt.Fprint(deps.Stderr, out)
+	if err := restartAndWait(ctx, deps, deployment, namespace, "attach sidecar"); err != nil {
+		return err
+	}
+	fmt.Fprintf(deps.Stderr, "Session %s recorded on deployment/%s in %s.\n", meta.ID, deployment, namespace)
+	return nil
+}
+
+func attachSidecarBounded(ctx context.Context, deps Dependencies, deployment, namespace, endpoint string, duration time.Duration) error {
+	meta := newSessionMeta(endpoint, "sidecar", duration)
+	if err := attachSidecarWithMeta(ctx, deps, deployment, namespace, endpoint, meta); err != nil {
+		return err
+	}
+	return runBoundedAttach(ctx, deps, duration, func(c context.Context) error {
+		return detachSidecar(c, deps, deployment, namespace)
+	}, fmt.Sprintf("deployment %s in namespace %s", deployment, namespace))
 }
 
 func detachSidecar(ctx context.Context, deps Dependencies, deployment, namespace string) error {
@@ -119,7 +138,7 @@ func detachSidecar(ctx context.Context, deps Dependencies, deployment, namespace
 		return fmt.Errorf("detach sidecar: %w", err)
 	}
 	if !document.hasOBIContainer() {
-		fmt.Fprintf(deps.Stdout, "Deployment %q has no OBI sidecar (already detached).\n", deployment)
+		fmt.Fprintf(deps.Stderr, "Deployment %q has no OBI sidecar (already detached).\n", deployment)
 		return nil
 	}
 	if !document.managedByZeroins() {
@@ -163,7 +182,7 @@ func detachSidecar(ctx context.Context, deps Dependencies, deployment, namespace
 	if err != nil {
 		return fmt.Errorf("detach sidecar: patch deployment: %w", err)
 	}
-	fmt.Fprint(deps.Stdout, out)
+	fmt.Fprint(deps.Stderr, out)
 	return restartAndWait(ctx, deps, deployment, namespace, "detach sidecar")
 }
 
@@ -172,11 +191,11 @@ func restartAndWait(ctx context.Context, deps Dependencies, deployment, namespac
 	if err != nil {
 		return fmt.Errorf("%s: restart deployment: %w", operation, err)
 	}
-	fmt.Fprint(deps.Stdout, out)
+	fmt.Fprint(deps.Stderr, out)
 	out, err = deps.Runner.Run(ctx, "kubectl", "rollout", "status", "deployment/"+deployment, "-n", namespace, "--timeout=120s")
 	if err != nil {
 		return fmt.Errorf("%s: wait for rollout: %w", operation, err)
 	}
-	fmt.Fprint(deps.Stdout, out)
+	fmt.Fprint(deps.Stderr, out)
 	return nil
 }

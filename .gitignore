@@ -14,6 +14,7 @@ profile.cov
 /kubectl-profiler
 /obi-integration
 /otelc-aspect
+/zeroins
 
 # Go workspace files
 go.work

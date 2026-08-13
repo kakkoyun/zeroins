@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kakkoyun/zeroins/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -34,6 +35,7 @@ func newTracesCommand(deps Dependencies) *cobra.Command {
 	var namespace string
 	var tail int
 	var follow bool
+	var outputFormat string
 	cmd := &cobra.Command{
 		Use:   "traces <deployment>",
 		Short: "Query recent Jaeger traces for a deployment",
@@ -42,16 +44,21 @@ func newTracesCommand(deps Dependencies) *cobra.Command {
 			if tail < 1 || tail > maxTraceLimit {
 				return fmt.Errorf("tail must be between 1 and %d", maxTraceLimit)
 			}
-			return pullTraces(cmd.Context(), deps, args[0], namespace, tail, follow)
+			format, err := output.ParseSimple(outputFormat)
+			if err != nil {
+				return err
+			}
+			return pullTraces(cmd.Context(), deps, args[0], namespace, tail, follow, string(format))
 		},
 	}
 	cmd.Flags().StringVarP(&namespace, "namespace", "n", "", "Filter by k8s.namespace.name")
 	cmd.Flags().IntVar(&tail, "tail", 20, "Maximum number of traces to request")
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Poll for new traces until cancelled")
+	cmd.Flags().StringVarP(&outputFormat, "output", "o", "table", "Output format: table or json")
 	return cmd
 }
 
-func pullTraces(ctx context.Context, deps Dependencies, deployment, namespace string, tail int, follow bool) error {
+func pullTraces(ctx context.Context, deps Dependencies, deployment, namespace string, tail int, follow bool, format string) error {
 	backend := deps.Getenv("OTEL_BACKEND")
 	if backend == "" {
 		backend = "http://localhost:16686"
@@ -92,7 +99,19 @@ func pullTraces(ctx context.Context, deps Dependencies, deployment, namespace st
 			return fmt.Errorf("pull traces: parse response: %w", err)
 		}
 		if len(result.Data) == 0 {
-			fmt.Fprintln(deps.Stdout, "No traces found.")
+			if format == string(output.FormatJSON) {
+				fmt.Fprintln(deps.Stdout, `{"data":[]}`)
+			} else {
+				fmt.Fprintln(deps.Stdout, "No traces found.")
+			}
+			return nil
+		}
+		if format == string(output.FormatJSON) {
+			jsonData, err := json.MarshalIndent(result, "", "  ")
+			if err != nil {
+				return fmt.Errorf("pull traces: encode result: %w", err)
+			}
+			fmt.Fprintln(deps.Stdout, string(jsonData))
 			return nil
 		}
 		fmt.Fprintf(deps.Stdout, "%-50s  %-12s  %s\n", "OPERATION", "DURATION", "START TIME")
